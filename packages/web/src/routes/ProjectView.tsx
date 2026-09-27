@@ -4,14 +4,11 @@ import { api } from "../lib/api";
 import { chatClient } from "../lib/ws";
 import { useProjects } from "../lib/projects-context";
 import type {
-  AdoptableChats,
   Chat,
   ChatCompleteUsage,
   ChatUsage,
   Project,
 } from "../lib/types";
-import { StatusPill } from "../components/StatusPill";
-import { TagPill } from "../components/TagPill";
 import { ChatPane } from "../components/ChatPane";
 import { rotateNewChatInstance } from "../lib/attachmentRefs";
 import type { ShellOutletContext } from "../components/AppShell";
@@ -19,73 +16,36 @@ import { ChangesPane } from "../components/ChangesPane";
 import { HistoryPane } from "../components/HistoryPane";
 import { useProjectRuns } from "../lib/useProjectRuns";
 import { FilesPane } from "../components/FilesPane";
-import { ProjectMenu } from "../components/ProjectMenu";
 import { SettingsPane } from "../components/SettingsPane";
 import { TriggersPane } from "../components/TriggersPane";
-import { ConfirmDialog } from "../components/ConfirmDialog";
-import { DeleteProjectDialog } from "../components/DeleteProjectDialog";
-import { ForkChatModal } from "../components/ForkChatModal";
-import { RenameChatModal } from "../components/RenameChatModal";
-import { PromoteChatModal } from "../components/PromoteChatModal";
-import { AdoptChatsModal } from "../components/AdoptChatsModal";
 import { usePaneWidth } from "../components/PaneResizer";
 import { CHATLIST_PANE } from "../lib/paneWidth";
-import { forgetChats } from "../lib/lastSeen";
-import {
-  BoltIcon,
-  BranchIcon,
-  ChatIcon,
-  CheckIcon,
-  ClockIcon,
-  MenuIcon,
-  PlusIcon,
-  WrenchIcon,
-} from "../components/icons";
-import { relativeTime } from "../lib/format";
 import { toSubPath, writeLastTab } from "../lib/lastTab";
-import { readForkParent, writeForkParent } from "../lib/forkLineage";
-import { buildChatTree, descendantIds, flatForest, withAncestors } from "../lib/chatTree";
+import { readForkParent } from "../lib/forkLineage";
+import { buildChatTree, flatForest, withAncestors } from "../lib/chatTree";
 import { readCollapsedChats, writeCollapsedChats } from "../lib/collapsedChats";
 import { useChatViewPrefs } from "./ProjectView/useChatViewPrefs";
 import type { GitProjectStatus } from "../lib/types";
 import {
   ROOT_KEY,
-  chatMessageUrl,
   decodeFilesSubpath,
   deriveView,
   gridUrl,
-  homeUrl,
   parseMessageAnchor,
-  repoHref,
   viewBase,
 } from "./ProjectView/urls";
-import { TabButton } from "./ProjectView/TabButton";
-import { PinnedTab } from "./ProjectView/PinnedTab";
+import { ProjectTabs } from "./ProjectView/ProjectTabs";
+import { ProjectHeader } from "./ProjectView/ProjectHeader";
+import { useMediaQuery } from "../lib/useMediaQuery";
 import { HomePane } from "./ProjectView/HomePane";
 import { SessionSidebar } from "./ProjectView/SessionSidebar";
 import { useUnreadChats } from "./ProjectView/useUnreadChats";
 import { useAttentionChats } from "./ProjectView/useAttentionChats";
-import { Toast } from "../components/Toast";
-import type { AdoptChatsResult } from "../lib/types";
-
-/**
- * What an adoption actually did (#588), in one line.
- *
- * Reports skips rather than rounding them away: "Adopted 7 chats" when two were
- * refused is a lie the user only discovers by counting rows. When every skip
- * shares a reason the reason is named — it is usually the whole explanation ("no
- * transcript on disk") and it is what turns a confusing number into an
- * actionable one.
- */
-export function adoptSummary({ adopted, skipped }: AdoptChatsResult): string {
-  const n = adopted.length;
-  if (n === 0 && skipped.length === 0) return "Nothing to adopt — no native chats were found.";
-  const head = n === 0 ? "Adopted nothing" : `Adopted ${n} chat${n === 1 ? "" : "s"}`;
-  if (skipped.length === 0) return head;
-  const reasons = [...new Set(skipped.map((s) => s.reason).filter(Boolean))];
-  const why = reasons.length === 1 ? ` (${reasons[0]})` : "";
-  return `${head} — skipped ${skipped.length}${why}`;
-}
+import { useChatAdoption } from "./ProjectView/useChatAdoption";
+import { useChatActions } from "./ProjectView/useChatActions";
+import { ChatDialogs } from "./ProjectView/ChatDialogs";
+import { useForkActions } from "./ProjectView/useForkActions";
+import { useWorkspaceNav } from "./ProjectView/useWorkspaceNav";
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -159,9 +119,6 @@ export function ProjectView({
   // transcript the user is watching would remount and flash. So we keep the same
   // key across the `null -> <newId>` establish transition.
   const paneKeyRef = useRef({ counter: 0, session: routeSessionId ?? null });
-  // Single-flight guard for fork-from-message so a double-click can't mint two
-  // forks (#451 QA). ProjectView outlives chat navigation, so it's a ref, not state.
-  const forkingRef = useRef(false);
   if (paneKeyRef.current.session !== (routeSessionId ?? null)) {
     const established = (location.state as { established?: boolean } | null)?.established;
     if (!established) paneKeyRef.current.counter += 1;
@@ -216,31 +173,6 @@ export function ProjectView({
   const [overview, setOverview] = useState("");
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
-  // --- Adopt native Claude Code CLI chats (#588) -----------------------------
-  // How many terminal-run sessions this workspace could adopt right now. A LIVE
-  // count, not a "has the user dismissed the offer?" flag: it is re-read after
-  // every adoption, so the sidebar button vanishes only because there is genuinely
-  // nothing left to take — and comes back on its own when the user accrues more
-  // CLI history. 0 both before the first fetch and when there is nothing on
-  // offer, which is the same thing as far as the UI is concerned.
-  const [adoptableCount, setAdoptableCount] = useState(0);
-  const [adopting, setAdopting] = useState(false);
-  // The full offer, fetched with the count and handed to the confirmation dialog
-  // (#660). Held beside the count rather than re-fetched on open so the dialog
-  // shows exactly what the button counted.
-  const [adoptable, setAdoptable] = useState<AdoptableChats | null>(null);
-  const [adoptOpen, setAdoptOpen] = useState(false);
-  // The one transient outcome message this route raises. Distinct from `loadErr`,
-  // which is an early return that replaces the entire page — correct for "this
-  // project failed to load", far too violent for "adopted 7 chats".
-  const [toast, setToast] = useState<{
-    message: string;
-    tone: "success" | "error";
-    /** Offered inside the toast, so the window to undo IS the toast's dwell. */
-    action?: { label: string; onAct: () => void };
-  } | null>(null);
-  const dismissToast = useCallback(() => setToast(null), []);
-
   // Git backing store: the project's working-tree status. null = not yet loaded
   // or not a git repo (`status.repo === false`) — either way the Changes tab is
   // hidden. The "Changes" tab is a real route (/changes[/:file]) like the other
@@ -254,46 +186,6 @@ export function ProjectView({
   // Mobile: the session list is an off-canvas drawer (static column on lg+).
   const [sessionsOpen, setSessionsOpen] = useState(false);
 
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  // The chat awaiting a new name in the rename dialog (#541); null when closed.
-  const [renamingChat, setRenamingChat] = useState<Chat | null>(null);
-  /**
-   * The chat delete awaiting confirmation. `ids` is what will actually be
-   * removed — just the chat, or (on a Shift-click) the chat plus every
-   * descendant. Carried alongside the chat so the dialog can COUNT what it's
-   * about to destroy: shift-deleting a fan-out takes out chats that may not even
-   * be on screen (the parent can be collapsed), and there is no undo.
-   */
-  const [deletingChat, setDeletingChat] = useState<{
-    chat: Chat;
-    ids: string[];
-    /**
-     * Nested chats that will SURVIVE the delete and be promoted to the top level
-     * by it. Non-zero whenever the chat has descendants the action isn't taking:
-     * a plain click on a parent (which never took them), or a Shift-click while a
-     * search has narrowed the rendered tree to a couple of matching children.
-     * The dialog says so — orphaning twenty chats is not something an
-     * irreversible action should do without mentioning it.
-     */
-    orphanCount: number;
-  } | null>(null);
-  /**
-   * The fork awaiting a name in the naming dialog (issue #279); null when the
-   * dialog is closed. BOTH fork paths land here: the sidebar's per-chat button
-   * (the whole chat, no `fromUuid`) and the transcript's per-message rail
-   * (#451), which carries the anchor message's uuid so the copy is cut at that
-   * turn. Forking from a specific message is a deliberate split, and the name is
-   * where the reason for it gets recorded — so it asks, exactly as the sidebar
-   * does, instead of minting `Fork of <chat>` behind the user's back.
-   *
-   * The uuid rides INSIDE this state rather than in a state of its own, because
-   * it is the one thing distinguishing the two paths and its loss is invisible:
-   * a dropped uuid still forks, still takes the typed name, still navigates — it
-   * just silently copies the ENTIRE transcript instead of stopping where the
-   * user pointed. One object means a stale rail uuid can never leak into a later
-   * sidebar fork.
-   */
-  const [forkRequest, setForkRequest] = useState<{ chat: Chat; fromUuid?: string } | null>(null);
   // The chat awaiting a name in the promote-into-a-project dialog (issue #20).
   // Root-only — see SessionSidebar.setPromotingChat.
   const [promotingChat, setPromotingChat] = useState<Chat | null>(null);
@@ -326,6 +218,10 @@ export function ProjectView({
   const viewPrefs = useChatViewPrefs();
   // Desktop-only draggable width for the chat-list pane (#374), persisted per-browser.
   const chatList = usePaneWidth(CHATLIST_PANE);
+  // Tailwind's `lg` — where the tab strip moves up into the header row (#919).
+  // Declared up here, not beside its use, because the loading/error early
+  // returns below would otherwise make it a conditional hook.
+  const isDesktop = useMediaQuery("(min-width: 1024px)");
   const autoExpandedFor = useRef<string | null>(null);
 
   // The active chat session is the URL's sessionId (null = a fresh "new chat").
@@ -524,119 +420,9 @@ export function ProjectView({
     if (list) setChats(list);
   }, [slug]);
 
-  // Re-read the adoptable-chat count (#588). Called on workspace open and again
-  // after an adoption — never on render, and never on a timer: the set of native
-  // sessions only changes when the user runs `claude` in a terminal, which no
-  // amount of polling here would make more timely.
-  //
-  // A failure zeroes the count rather than leaving the previous one standing: the
-  // endpoint is new and an older server 404s it, and a button offering to adopt
-  // N chats that then fails to adopt anything is worse than no button. The
-  // offer costs nothing to make again on the next open.
-  const refreshAdoptable = useCallback(async () => {
-    const res = await api.getAdoptableChats(slug).catch(() => null);
-    setAdoptableCount(res?.count ?? 0);
-    setAdoptable(res);
-  }, [slug]);
-
-  /**
-   * Undo the adoption just performed (#660).
-   *
-   * Carries only the session ids; WHICH files may be deleted is decided
-   * server-side from what the adoption actually did, so this can never be talked
-   * into removing something it did not create. `released: []` is a normal
-   * outcome (the offer is in-memory and expires with a restart) and is reported
-   * as such rather than as a success.
-   */
-  const undoAdopt = useCallback(
-    async (sessionIds: string[]) => {
-      setToast(null);
-      try {
-        const res = await api.unadoptChats(slug, { sessionIds });
-        await refreshChats();
-        await refreshAdoptable();
-        setToast(
-          res.released.length > 0
-            ? {
-                message: `Removed ${res.released.length} adopted chat${res.released.length === 1 ? "" : "s"}.`,
-                tone: "success",
-              }
-            : { message: "Nothing left to undo.", tone: "error" },
-        );
-      } catch (e) {
-        setToast({
-          message: e instanceof Error ? e.message : "Failed to undo the adoption",
-          tone: "error",
-        });
-      }
-    },
-    [slug, refreshChats, refreshAdoptable],
-  );
-
-  /**
-   * Adopt the native CLI chats the user confirmed (#588, #660).
-   *
-   * Takes an explicit id list rather than "everything matched": the dialog is
-   * where the decision is made, and sending the selection means a user who
-   * unticked a source they did not recognise gets what they asked for.
-   *
-   * Both the chat list AND the count are re-read afterwards, in that order of
-   * importance: the list is what the user came for, the count is what makes the
-   * button disappear. Neither is inferred from the response — the count in
-   * particular must come from the server, or the button's visibility would drift
-   * away from what is actually still adoptable.
-   *
-   * A successful adoption offers an Undo for as long as its toast stands.
-   */
-  const confirmAdopt = useCallback(
-    async (sessionIds: string[]) => {
-    if (adopting) return;
-    setAdopting(true);
-    try {
-      const res = await api.adoptChats(slug, { sessionIds });
-      setAdoptOpen(false);
-      await refreshChats();
-      await refreshAdoptable();
-      const failed = res.adopted.length === 0 && res.skipped.length > 0;
-      setToast({
-        message: adoptSummary(res),
-        // Nothing adopted AND something refused is the one shape that reads as a
-        // failure to the user, whatever the HTTP status said.
-        tone: failed ? "error" : "success",
-        // Nothing came in, nothing to take back out.
-        action:
-          res.adopted.length > 0
-            ? { label: "Undo", onAct: () => void undoAdopt(res.adopted) }
-            : undefined,
-      });
-    } catch (e) {
-      // Deliberately NOT `setLoadErr` (which would blank the whole project view
-      // over a failed side-action) and deliberately no count refresh — the offer
-      // stands, so the button stays clickable for a retry.
-      setToast({
-        message: e instanceof Error ? e.message : "Failed to adopt native chats",
-        tone: "error",
-      });
-    } finally {
-      // In `finally` so a throw can never strand the button in "Adopting…".
-      setAdopting(false);
-    }
-    },
-    [adopting, slug, refreshChats, refreshAdoptable, undoAdopt],
-  );
-
-  // Fetch the adoptable count once per workspace open. `refreshAdoptable` is
-  // slug-scoped and otherwise stable, so this is the whole "on open, not on every
-  // render" story — the deps array does the gating, no ref needed. The count and
-  // any leftover toast reset FIRST so switching workspaces can't briefly offer to
-  // adopt the previous one's chats.
-  useEffect(() => {
-    setAdoptableCount(0);
-    setAdoptable(null);
-    setAdoptOpen(false);
-    setToast(null);
-    void refreshAdoptable();
-  }, [refreshAdoptable]);
+  // Native CLI chat adoption (#588, #660) — count, dialog, adopt/undo, toast.
+  const adoption = useChatAdoption(slug, refreshChats);
+  const { adoptableCount, adopting, setAdoptOpen } = adoption;
 
   // After a turn completes, re-fetch the project (pull model): a fresh sweep may
   // have written OVERVIEW.md / appended to CHANGELOG.
@@ -681,35 +467,20 @@ export function ProjectView({
     setSessionsOpen(false);
   }, [view, routeSessionId, filesSubpath, routeChangeFile]);
 
-  // --- URL-driven navigation (all tab/chat/file clicks change the route) -----
-  // Root Home is the bare `/` — there is no `/home` at the root (#516), so the
-  // Home target is the only nav site that isn't a plain `${base}/…`.
-  const goHome = useCallback(() => navigate(homeUrl(base)), [navigate, base]);
-  const goChat = useCallback(() => navigate(`${base}/chat`), [navigate, base]);
-  const goFiles = useCallback(() => navigate(`${base}/files`), [navigate, base]);
-  const goChanges = useCallback(() => navigate(`${base}/changes`), [navigate, base]);
-  const goHistory = useCallback(() => navigate(`${base}/history`), [navigate, base]);
-  const goSettings = useCallback(() => navigate(`${base}/settings`), [navigate, base]);
-  const goTriggers = useCallback(() => navigate(`${base}/triggers`), [navigate, base]);
-  // Select a specific changed file in the Changes tab, reflecting it in the URL
-  // so a specific diff/file is deep-linkable (issue #107). null clears to the
-  // bare /changes route.
-  const openChangeFile = useCallback(
-    (file: string | null) =>
-      navigate(
-        file
-          ? `${base}/changes/${encodeURIComponent(file)}`
-          : `${base}/changes`,
-      ),
-    [navigate, base],
-  );
-  // The Hooks tab was renamed + folded into Triggers (Epic T / T4). Redirect any old
-  // `/hooks` link/bookmark to the canonical `/triggers` route (replace so Back skips it).
-  useEffect(() => {
-    if (location.pathname.startsWith(`${base}/hooks`)) {
-      navigate(`${base}/triggers`, { replace: true });
-    }
-  }, [location.pathname, navigate, base]);
+  // URL-driven navigation — every tab/chat/file click changes the route.
+  const {
+    goHome,
+    goChat,
+    goFiles,
+    goChanges,
+    goHistory,
+    goSettings,
+    goTriggers,
+    openChangeFile,
+    openChat,
+    openChatIn,
+    goToFilesPath,
+  } = useWorkspaceNav(base, navigate, location.pathname);
   // Start a brand-new chat. Bump the pane nonce first so the ChatPane is force-
   // remounted into a clean, session-less composer even when the current pane is a
   // still-streaming new chat whose establish navigation hasn't landed yet (which
@@ -723,113 +494,16 @@ export function ProjectView({
     rotateNewChatInstance(slug);
     goChat();
   }, [goChat, slug]);
-  const openChat = useCallback(
-    (sessionId: string) =>
-      navigate(`${base}/chat/${encodeURIComponent(sessionId)}`),
-    [navigate, base],
-  );
-  /**
-   * Open a chat that may live in ANOTHER workspace (#599). Home's running and
-   * unread feeds are subtree-wide, so on the root's Home most rows belong to a
-   * project and have to navigate into that project's own base, not this one's.
-   *
-   * `viewBase` is what resolves the key, so the root (`""`) lands on the bare
-   * top-level routes and a project on `/projects/:slug` — no branch here.
-   */
-  const openChatIn = useCallback(
-    (sessionId: string, projectSlug: string) =>
-      navigate(`${viewBase(projectSlug)}/chat/${encodeURIComponent(sessionId)}`),
-    [navigate],
-  );
-  /**
-   * Perform the fork the user has now named: duplicate the chat server-side into
-   * a NEW session in the same project, then jump straight to it. The fork exists
-   * immediately — a real, resumable chat with the parent's history visible. The
-   * name is collected up front by the ForkChatModal (issue #279); we record the
-   * lineage locally for the composer back-link and pass `justForked` so the pane
-   * focuses the composer to continue.
-   *
-   * `fromUuid` (issue #451) is what makes this the whole chat or a branch: given
-   * one, the server copies only the PREFIX up to that message. It is threaded
-   * through explicitly and never defaulted — see `forkRequest`.
-   */
-  const commitFork = useCallback(
-    async (chat: Chat, name: string, fromUuid?: string) => {
-      // Guard against a double-submit minting two forks (#451 QA): ignore a
-      // second invocation while one is already in flight. Navigation unmounts
-      // the pane on success but NOT this route, hence the explicit release.
-      if (forkingRef.current) return;
-      forkingRef.current = true;
-      let newId: string;
-      try {
-        newId = await api.forkChat(slug, chat.sessionId, name, fromUuid);
-      } catch (e) {
-        setLoadErr(e instanceof Error ? e.message : "Failed to fork chat");
-        forkingRef.current = false;
-        return;
-      }
-      writeForkParent(newId, { sessionId: chat.sessionId, name: chat.name });
-      await refreshChats();
-      navigate(`${base}/chat/${encodeURIComponent(newId)}`, {
-        state: { justForked: true },
-      });
-      // ProjectView stays mounted across chat navigation, so clear the guard for
-      // the next (deliberate) fork.
-      forkingRef.current = false;
-    },
-    [navigate, base, slug, refreshChats],
-  );
-  /** Ask for a name before forking a whole chat (the sidebar's fork button). */
-  const requestFork = useCallback((chat: Chat) => setForkRequest({ chat }), []);
-  /**
-   * Ask for a name before forking the active chat at `uuid` (the transcript's
-   * per-message rail, issue #451). Same dialog, same default, one extra field.
-   *
-   * The synthesized fallback covers the open chat transiently dropping out of
-   * the list (#154): the rail is rendered by the pane, not the sidebar, so it
-   * stays clickable then — and a dialog titled after a chat we cannot name beats
-   * a button that does nothing.
-   */
-  const requestForkFromMessage = useCallback(
-    (uuid: string) => {
-      if (!activeSession) return;
-      const source = chats.find((c) => c.sessionId === activeSession) ?? {
-        sessionId: activeSession,
-        workingDirectory: "",
-        name: "Current chat",
-        updatedAt: "",
-        resumable: true,
-      };
-      setForkRequest({ chat: source, fromUuid: uuid });
-    },
-    [activeSession, chats],
-  );
-  // Revert the active chat back to an earlier message (issue #451): truncate in
-  // place (same session id); the pane reloads its own shorter transcript once
-  // this resolves. Rethrow so the pane surfaces the failure and skips its reload.
-  const revertToMessage = useCallback(
-    async (uuid: string) => {
-      if (!activeSession) return;
-      try {
-        await api.revertChat(slug, activeSession, uuid);
-      } catch (e) {
-        setLoadErr(e instanceof Error ? e.message : "Failed to revert chat");
-        throw e;
-      }
-      await refreshChats();
-    },
-    [activeSession, slug, refreshChats],
-  );
-  // --- message deep links -----------------------------------------------------
-  // Absolute, so what lands on the clipboard is shareable rather than a path only
-  // this tab can resolve (see chatMessageUrl for the fragment's shape).
-  const messageLink = useCallback(
-    (uuid: string) =>
-      activeSession
-        ? `${window.location.origin}${chatMessageUrl(base, activeSession, uuid)}`
-        : window.location.href,
-    [base, activeSession],
-  );
+  // Fork (whole chat or from a message), revert, and message deep links.
+  const {
+    forkRequest,
+    setForkRequest,
+    commitFork,
+    requestFork,
+    requestForkFromMessage,
+    revertToMessage,
+    messageLink,
+  } = useForkActions({ slug, base, activeSession, chats, navigate, refreshChats, setLoadErr });
   // The message named by the current fragment, if any. Read through `location` so
   // it tracks in-app navigation rather than freezing at whatever the page loaded with.
   const focusMessageUuid = parseMessageAnchor(location.hash);
@@ -840,19 +514,6 @@ export function ProjectView({
   // True right after forking (router state), so the pane auto-focuses its
   // composer to continue the new fork.
   const justForked = (location.state as { justForked?: boolean } | null)?.justForked === true;
-  // Navigate the Files tab to a subpath — a folder, a file, or "" for the root
-  // (issue #259). Each segment is encoded individually so the real "/" separators
-  // stay in the URL (deep-linkable nested path) while odd filename characters are
-  // still escaped.
-  const goToFilesPath = useCallback(
-    (subpath: string) =>
-      navigate(
-        subpath
-          ? `${base}/files/${subpath.split("/").map(encodeURIComponent).join("/")}`
-          : `${base}/files`,
-      ),
-    [navigate, base],
-  );
 
   // A brand-new chat has started streaming and just learned its session id
   // (mid-turn). Surface it as a real, persistent sidebar entry immediately and
@@ -953,192 +614,21 @@ export function ProjectView({
     [slug, base, upsert, filesSubpath, navigate],
   );
 
-  const confirmDeleteChat = useCallback(async () => {
-    if (!deletingChat) return;
-    const { ids } = deletingChat;
-    // One chat keeps the plain route; a subtree goes through the batch route so a
-    // failure partway can't leave half a family deleted with nothing to report.
-    // Either way we only drop the ids the server says it actually REMOVED — a
-    // chat that failed to delete stays in the list rather than silently vanishing
-    // from the UI while its transcript is still on disk.
-    let removed: string[];
-    if (ids.length === 1) {
-      await api.deleteProjectChat(slug, ids[0]);
-      removed = ids;
-    } else {
-      const res = await api.deleteProjectChats(slug, ids);
-      removed = res.removed;
-      if (res.failed.length) {
-        setLoadErr(
-          `Deleted ${res.removed.length} of ${ids.length} chats — ${res.failed.length} could not be removed.`,
-        );
-      }
-    }
-    const gone = new Set(removed);
-    // #732: retract these chats from every per-session-id cache in the tab —
-    // read-state here, the sidebar badge's completion cache via the event. Only
-    // the ids the server CONFIRMED removed, for the same reason the list filter
-    // below uses them: a chat the delete spared still exists, and forgetting its
-    // watermark would re-raise an unread cue on a chat we just said survived.
-    forgetChats(removed);
-    setChats((prev) => prev.filter((c) => !gone.has(c.sessionId)));
-    // If the open chat was among them, drop back to a fresh "new chat". `base`
-    // is "" at the root and `/projects/:slug` otherwise (#516).
-    if (activeSession && gone.has(activeSession)) {
-      navigate(`${base}/chat`, { replace: true });
-    }
-    setDeletingChat(null);
-  }, [deletingChat, slug, base, activeSession, navigate]);
-
-  /** Open the count-aware delete confirmation for a chat (or a whole subtree). */
-  const requestDeleteChat = useCallback(
-    (chat: Chat, ids: string[]) => {
-      // Descendants are counted against the UNFILTERED list, narrowed to this
-      // chat's own population (active or archived) because that's what the tree
-      // nests at. Anything attached but not being deleted gets orphaned to the
-      // root, and the dialog has to say so.
-      const population = chats.filter((c) => !!c.archived === !!chat.archived);
-      const taking = new Set(ids);
-      const orphanCount = descendantIds(population, chat.sessionId).filter(
-        (id) => !taking.has(id),
-      ).length;
-      setDeletingChat({ chat, ids, orphanCount });
-    },
-    [chats],
-  );
-
-  // Commit a rename from the modal. `name === null` is the deliberate "clear it"
-  // case, which resets the chat to its generated preview name — the modal keeps
-  // that distinct from cancelling, which never reaches here at all (#541).
-  const commitRename = useCallback(
-    async (chat: Chat, name: string | null) => {
-      await api.renameProjectChat(slug, chat.sessionId, name);
-      setChats((prev) =>
-        prev.map((c) =>
-          c.sessionId === chat.sessionId
-            ? { ...c, name: name || c.preview || c.sessionId.slice(0, 8) }
-            : c,
-        ),
-      );
-    },
-    [slug],
-  );
-
-  // Archive or unarchive a chat (#95): toggle the persisted flag and optimistically
-  // move it between the current list and the Archived section. Non-destructive —
-  // the transcript is untouched and the chat stays fully usable.
-  // `sessionIds` is the set to apply to (#508): the chat alone on a plain click,
-  // or the chat plus every descendant on a Shift-click. A subtree always lives in
-  // ONE population — the tree is built per population, so an active chat's
-  // descendants are all active too — which is why the rollback can restore every
-  // id to the clicked chat's previous `archived` value rather than snapshotting
-  // each one.
-  const archiveChat = useCallback(
-    async (chat: Chat, sessionIds: string[]) => {
-      const next = !chat.archived;
-      const ids = new Set(sessionIds);
-      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: next } : c)));
-      // When archiving the last one out of an expanded section, keep it open so
-      // the user sees where it went; opening/closing is otherwise user-driven.
-      if (next) setArchivedOpen(true);
-      try {
-        if (sessionIds.length === 1) await api.archiveProjectChat(slug, sessionIds[0], next);
-        else await api.archiveProjectChats(slug, sessionIds, next);
-      } catch (e) {
-        // Roll back the whole optimistic move on failure — one call, one undo.
-        setChats((prev) =>
-          prev.map((c) => (ids.has(c.sessionId) ? { ...c, archived: chat.archived } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to archive chat");
-      }
-    },
-    [slug],
-  );
-
-  /**
-   * Detach a chat from its parent (#508): promote it — with its own nested chats
-   * — to the top level. Optimistically drop the local `parent` edge so the row
-   * jumps out immediately; the server override is what makes it stick across a
-   * reload (clearing an edge alone wouldn't: most edges are re-derived by
-   * inference, see the detach route).
-   */
-  const detachChat = useCallback(
-    async (chat: Chat) => {
-      const parent = chat.parent;
-      if (!parent) return;
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent: undefined } : c)),
-      );
-      try {
-        await api.detachProjectChat(slug, chat.sessionId, true);
-      } catch (e) {
-        setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, parent } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to detach chat");
-      }
-    },
-    [slug],
-  );
-
-  // Star or unstar a chat (#373): toggle the persisted flag and optimistically
-  // re-pin it to the top of its population. Orthogonal to archiving — starring
-  // never moves a chat between the active and Archived sections.
-  const starChat = useCallback(
-    async (chat: Chat) => {
-      const next = !chat.starred;
-      setChats((prev) =>
-        prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: next } : c)),
-      );
-      try {
-        await api.starProjectChat(slug, chat.sessionId, next);
-      } catch (e) {
-        // Roll back the optimistic pin on failure.
-        setChats((prev) =>
-          prev.map((c) => (c.sessionId === chat.sessionId ? { ...c, starred: chat.starred } : c)),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to star chat");
-      }
-    },
-    [slug],
-  );
-
-  // Toggle a chat's read/unread state (#458) — the sixth chat action. If the chat
-  // currently reads as unread (for ANY reason: manual flag, a live completion, or
-  // a turn finished while away), mark it seen (clears the manual flag + advances
-  // last-seen). Otherwise set the manual unread override so it resurfaces its cue
-  // later ("look at it again in the morning"), optimistically with rollback.
-  // `sessionIds` is the subtree set (#508); the CLICKED chat decides the
-  // direction for the whole set, so a mixed family ends up uniformly read or
-  // uniformly unread rather than each row flipping its own way.
-  const toggleUnread = useCallback(
-    async (chat: Chat, sessionIds: string[]) => {
-      if (unread.has(chat.sessionId)) {
-        markManySeen(sessionIds);
-        return;
-      }
-      const ids = new Set(sessionIds);
-      // Unlike archive, a subtree's manual-unread flags are NOT uniform, so the
-      // rollback restores each chat's own prior value.
-      const before = new Map(
-        chats.filter((c) => ids.has(c.sessionId)).map((c) => [c.sessionId, c.unread]),
-      );
-      setChats((prev) => prev.map((c) => (ids.has(c.sessionId) ? { ...c, unread: true } : c)));
-      try {
-        if (sessionIds.length === 1) await api.markChatUnread(slug, sessionIds[0], true);
-        else await api.markChatsUnread(slug, sessionIds, true);
-      } catch (e) {
-        // Roll back the optimistic flags on failure.
-        setChats((prev) =>
-          prev.map((c) =>
-            ids.has(c.sessionId) ? { ...c, unread: before.get(c.sessionId) } : c,
-          ),
-        );
-        setLoadErr(e instanceof Error ? e.message : "Failed to mark chat unread");
-      }
-    },
-    [unread, markManySeen, slug, chats],
-  );
+  // Per-chat row actions (delete / rename / archive / detach / star / unread).
+  const chatActions = useChatActions({
+    slug,
+    base,
+    activeSession,
+    navigate,
+    chats,
+    setChats,
+    setLoadErr,
+    setArchivedOpen,
+    unread,
+    markManySeen,
+  });
+  const { requestDeleteChat, setRenamingChat, archiveChat, detachChat, starChat, toggleUnread } =
+    chatActions;
 
   // Partition the (search-filtered) chat list into the current (top) and
   // archived (bottom) groups (#95), then nest each into a tree so a chat created
@@ -1257,117 +747,38 @@ export function ProjectView({
     view === "files" && filesSubpath && pinned.includes(filesSubpath) ? filesSubpath : null;
   const filesTabActive = view === "files" && !activePinnedFile;
 
+  // The tab strip renders ONCE (#919): in the header row on desktop, atop the
+  // main column on mobile. One copy, not a CSS-hidden twin, so there is only
+  // ever one Home tab in the accessibility tree.
+  const tabProps = {
+    view,
+    filesTabActive,
+    gitStatus,
+    newRunCount,
+    pinned,
+    activePinnedFile,
+    goHome,
+    goChat,
+    goFiles,
+    goChanges,
+    goHistory,
+    goSettings,
+    goTriggers,
+    goToFilesPath,
+    unpinTab,
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header. On mobile it's a compact single row that also HOSTS the global
-          nav hamburger (#372) — the shell drops its separate brand row on project
-          routes so these two collapse into one, reclaiming vertical space. The
-          project name links to Home; the tags / overview badge / "updated" time
-          and the summary live on the Home tab (desktop-only here). `pt-safe`
-          clears the status bar/notch now that the shell's bar is gone. On lg+ it
-          wraps into the full rich header. */}
-      <header className="pt-safe border-b border-edge px-3 pb-2.5 sm:px-6 lg:py-4">
-        <div className="flex items-center gap-2 lg:flex-wrap lg:gap-3">
-          {/* Global project-nav drawer — inline on mobile only (the shell's own
-              hamburger row is suppressed on project routes). */}
-          <button
-            type="button"
-            onClick={openNav}
-            className="btn-subtle -ml-1 shrink-0 px-2 py-1.5 lg:hidden"
-            aria-label="Open menu"
-          >
-            <MenuIcon width={20} height={20} />
-          </button>
-          <button
-            type="button"
-            onClick={() => setSessionsOpen(true)}
-            className="btn-subtle shrink-0 gap-1.5 px-2 py-1.5 lg:-ml-2 lg:hidden"
-            aria-label="Show chats"
-          >
-            <ChatIcon width={16} height={16} />
-            <span className="hidden sm:inline">Chats</span>
-            {chats.length > 0 && (
-              <span className="text-2xs text-fg-subtle">{chats.length}</span>
-            )}
-          </button>
-          {/* The project name doubles as a breadcrumb up to the Home tab. */}
-          <h1 className="min-w-0 text-lg font-semibold tracking-tight lg:text-xl">
-            <button
-              type="button"
-              onClick={goHome}
-              title="Project home"
-              className="block max-w-full truncate rounded transition-colors hover:text-accent"
-            >
-              {project.name}
-            </button>
-          </h1>
-          <StatusPill status={project.status} />
-          {project.domain.map((d) => (
-            <TagPill key={d} tag={d} className="hidden lg:inline-flex" />
-          ))}
-          {project.hasOverview && (
-            <span
-              title="A sweep has curated an OVERVIEW.md for this project. New chats can preload it as context."
-              className="hidden items-center gap-1 rounded-md bg-success-soft px-1.5 py-0.5 text-2xs font-medium text-success lg:inline-flex"
-            >
-              <CheckIcon width={11} height={11} />
-              Overview
-            </span>
-          )}
-          {!project.managed && project.repo && (
-            <a
-              href={repoHref(project.repo)}
-              target="_blank"
-              rel="noreferrer"
-              title={
-                project.path
-                  ? `Claude works in ${project.path}, a checkout of ${project.repo}`
-                  : `Claude works in a clone of ${project.repo}`
-              }
-              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
-            >
-              <BranchIcon width={11} height={11} />
-              Repo
-            </a>
-          )}
-          {!project.managed && !project.repo && project.path && (
-            <span
-              title={`Claude works in ${project.path}. Paddock writes no project files there.`}
-              className="hidden items-center gap-1 rounded-md bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info lg:inline-flex"
-            >
-              <BranchIcon width={11} height={11} />
-              Linked
-            </span>
-          )}
-          <span className="ml-auto hidden items-center gap-1 text-xs text-fg-subtle lg:inline-flex">
-            <ClockIcon width={12} height={12} />
-            updated {relativeTime(project.updated)}
-          </span>
-          {/* Mobile-only shortcut to start a new chat (desktop has it in the
-              session-list column). */}
-          <button
-            type="button"
-            onClick={newChat}
-            aria-label="New chat"
-            title="New chat"
-            className="btn-subtle ml-auto shrink-0 px-2 py-1.5 lg:hidden"
-          >
-            <PlusIcon width={16} height={16} />
-          </button>
-          <ProjectMenu
-            onEdit={goSettings}
-            // Deleting the ROOT is refused server-side — its directory IS the
-            // whole projects root — so the root menu offers Edit only (#516).
-            onDelete={root ? undefined : () => setDeleteOpen(true)}
-            size={18}
-          />
-        </div>
-        {project.summary && (
-          <p className="mt-1.5 hidden text-sm text-fg-muted lg:block">
-            {project.summary}
-          </p>
-        )}
-      </header>
+      <ProjectHeader
+        name={project.name}
+        onHome={goHome}
+        openNav={openNav}
+        onShowChats={() => setSessionsOpen(true)}
+        chatCount={chats.length}
+        onNewChat={newChat}
+        tabs={isDesktop ? <ProjectTabs placement="header" {...tabProps} /> : undefined}
+      />
 
       <div className="flex min-h-0 flex-1">
         <SessionSidebar
@@ -1412,119 +823,7 @@ export function ProjectView({
 
         {/* Main: tabs + content. The active tab is derived from the URL. */}
         <div className="flex min-w-0 flex-1 flex-col">
-          {/* On mobile the chat view hides the tab bar — the compact header
-              breadcrumb (name → Home) is the way back to the tabbed hub, so the
-              chat gets the full height. Tabs stay visible on Home/Files/Changes
-              and on lg+ everywhere. */}
-          {/* The tab bar is TWO elements on purpose (see TabButton). The outer
-              one draws the 1px rule under the tabs; the inner one is the
-              horizontal scroller. They cannot be the same element: `overflow-x:
-              auto` promotes `overflow-y: visible` to `auto` (CSS Overflow §3),
-              so the strip becomes a vertical scroll container too — and a
-              scroll container's scrollable area is the union of its
-              descendants' BORDER boxes, which negative margins do not shrink.
-              The tabs' active underline has to overlap that rule by 1px, so
-              with the rule on the scroller itself the overlap showed up as 1px
-              of scrollable overflow and a spurious vertical scrollbar. Hanging
-              the -1px off the scroller (whose parent is not a scroll container)
-              instead of off each tab gives the identical geometry with none of
-              the overflow. */}
-          <div
-            className={`border-b border-edge ${
-              view === "chat" ? "hidden lg:block" : "block"
-            }`}
-          >
-          {/* Tagged for the e2e specs: at the ROOT the workspace name is "Home"
-              (#921), which is also a tab label, so `main` alone no longer names
-              the tab strip's Home button unambiguously — the header breadcrumb
-              carries the same text. */}
-          <div
-            data-testid="workspace-tabs"
-            className="-mb-px flex items-center gap-1 overflow-x-auto px-4"
-          >
-            <TabButton active={view === "home"} onClick={goHome}>
-              Home
-            </TabButton>
-            <TabButton active={view === "chat"} onClick={goChat}>
-              Chat
-            </TabButton>
-            <TabButton active={filesTabActive} onClick={goFiles}>
-              Files
-            </TabButton>
-            {/* The Changes tab appears ONLY when the projects dir is a git repo.
-                It carries a subtle "N uncommitted" badge so pending work is
-                visible without opening it. At the ROOT that status is the WHOLE
-                backing repo, which is the point — the root is where you commit
-                across the instance. */}
-            {gitStatus && (
-              <TabButton active={view === "changes"} onClick={goChanges}>
-                <span className="inline-flex items-center gap-1.5">
-                  Changes
-                  {gitStatus.files.length > 0 && (
-                    <span
-                      title={`${gitStatus.files.length} uncommitted change${
-                        gitStatus.files.length === 1 ? "" : "s"
-                      }`}
-                      className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-warn-soft px-1 text-3xs font-semibold text-warn"
-                    >
-                      {gitStatus.files.length}
-                    </span>
-                  )}
-                </span>
-              </TabButton>
-            )}
-            {/* The History tab — the "while you were away" run view (#268). Its
-                badge counts unattended (scheduled + spawned) runs that finished
-                since the user last opened it, so unattended work is visible
-                without opening the tab. */}
-            <TabButton active={view === "history"} onClick={goHistory}>
-              <span className="inline-flex items-center gap-1.5">
-                History
-                {newRunCount > 0 && (
-                  <span
-                    title={`${newRunCount} new unattended run${newRunCount === 1 ? "" : "s"} since your last visit`}
-                    className="inline-flex min-w-[1.1rem] items-center justify-center rounded-full bg-accent-soft px-1 text-3xs font-semibold text-accent"
-                  >
-                    {newRunCount}
-                  </span>
-                )}
-              </span>
-            </TabButton>
-            {/* The workspace's own settings — its `project.yaml`. At the root
-                this is `/settings`; the instance-wide config it used to sit
-                above is its own screen at `/config`. */}
-            <TabButton active={view === "settings"} onClick={goSettings}>
-              <span className="inline-flex items-center gap-1.5">
-                <WrenchIcon width={13} height={13} />
-                Settings
-              </span>
-            </TabButton>
-            {/* The Triggers tab (Epic T / T4): per-project triggers — an agent turn
-                that fires on a schedule, a lifecycle event, or a webhook (reserved),
-                with a precise type + capability picker. Folds in the former Hooks tab
-                and the Settings→Schedules section. */}
-            <TabButton active={view === "triggers"} onClick={goTriggers}>
-              <span className="inline-flex items-center gap-1.5">
-                <BoltIcon width={13} height={13} />
-                Triggers
-              </span>
-            </TabButton>
-            {/* Pinned file tabs (sibling tabs), order preserved by the server.
-                Each links to /files/:name so the tab is deep-linkable. Pinning is
-                driven FROM the Files tab, so these come with Phase 4 rather than
-                Phase 5 — a Files tab that can pin, next to a tab bar that won't
-                show the pin, would just be incoherent. */}
-            {pinned.map((f) => (
-              <PinnedTab
-                key={f}
-                file={f}
-                active={activePinnedFile === f}
-                onSelect={() => goToFilesPath(f)}
-                onUnpin={() => void unpinTab(f)}
-              />
-            ))}
-          </div>
-          </div>
+          {!isDesktop && <ProjectTabs placement="column" {...tabProps} />}
 
           {/* The Changes tab (its own /changes[/:file] route). It owns
               refetching status post-commit and propagates it up so the tab badge
@@ -1569,8 +868,8 @@ export function ProjectView({
                 upsert(p);
               }}
               // The danger zone deletes the project you are standing in, so the
-              // page under you stops existing (#923). Same destination as the
-              // header menu's delete.
+              // page under you stops existing (#923). It is the only delete
+              // inside a project since the header's `⋯` menu went (#919).
               onDeleted={() => navigate(gridUrl())}
             />
           )}
@@ -1666,145 +965,17 @@ export function ProjectView({
         </div>
       </div>
 
-      {/* One shared dialog for all three delete affordances — this menu, the
-          grid card, and the Settings danger zone (#923). It owns the
-          linked-vs-managed copy and the full set of post-delete side effects
-          (context, last-tab), so they cannot drift apart again. */}
-      <DeleteProjectDialog
-        project={project}
-        open={deleteOpen}
-        // Back to the projects grid — the root workspace's children tab.
-        onDeleted={() => navigate(gridUrl())}
-        onClose={() => setDeleteOpen(false)}
-      />
-      {/* Chat delete confirmation. The copy is COUNT-AWARE (#508): a Shift-click
-          on a parent deletes its whole subtree, and a collapsed parent means
-          those chats aren't even on screen — so the dialog names the number
-          rather than saying "this chat" and taking out twenty-one. */}
-      <ConfirmDialog
-        open={deletingChat !== null}
-        title={
-          deletingChat && deletingChat.ids.length > 1
-            ? `Delete ${deletingChat.ids.length} chats?`
-            : "Delete chat?"
-        }
-        message={
-          deletingChat && (
-            <>
-              {deletingChat.ids.length > 1 ? (
-                <>
-                  <span className="font-medium text-fg">
-                    {deletingChat.chat.name}
-                  </span>{" "}
-                  and its {deletingChat.ids.length - 1} nested chat
-                  {deletingChat.ids.length - 1 === 1 ? "" : "s"} will be permanently removed —
-                  their transcripts too.
-                </>
-              ) : (
-                "This chat's transcript will be permanently removed."
-              )}
-              {/* Survivors, named. Reachable two ways: a plain click on a parent
-                  (which never takes its children), and a Shift-click while a
-                  search has narrowed the tree to a few matching children. Either
-                  way the rest are re-homed to the top level by an action that
-                  can't be undone, so the dialog says it out loud. */}
-              {deletingChat.orphanCount > 0 && (
-                <>
-                  {" "}
-                  Its {deletingChat.orphanCount} other nested chat
-                  {deletingChat.orphanCount === 1 ? "" : "s"} will be kept and moved to the top
-                  level.
-                </>
-              )}{" "}
-              This cannot be undone.
-            </>
-          )
-        }
-        confirmLabel={
-          deletingChat && deletingChat.ids.length > 1
-            ? `Delete ${deletingChat.ids.length} chats`
-            : "Delete chat"
-        }
-        onConfirm={confirmDeleteChat}
-        onClose={() => setDeletingChat(null)}
-      />
-      {promotingChat && (
-        <PromoteChatModal
-          open
-          slug={slug}
-          sessionId={promotingChat.sessionId}
-          defaultName={promotingChat.name}
-          onClose={() => setPromotingChat(null)}
-          onPromoted={(project) => {
-            setPromotingChat(null);
-            // Put the new project in the sidebar NOW (#566). Nothing else would:
-            // the project list has no push channel (`ws.ts` carries only
-            // `chat:*`), so without this it stays missing until a full reload or
-            // an unrelated `refreshProjects()` — which is why the row used to
-            // appear only after you sent a turn in the new project.
-            //
-            // `upsert` and not `refresh()`: refetching flips the context's
-            // `loading` flag, and AppShell swaps the whole project list for
-            // skeletons while it is set — so a round-trip would trade a missing
-            // row for a visible flash of the entire nav. This is the same local
-            // insert the New Project path already does (`ProjectsGrid`).
-            upsert(project);
-            // The transcript moved, so the chat is gone from this list and lives
-            // in the new project — land the user where it went.
-            navigate(`/projects/${project.slug}/chat`);
-          }}
-        />
-      )}
-      {renamingChat && (
-        <RenameChatModal
-          open
-          chatName={renamingChat.name}
-          resetName={renamingChat.preview}
-          onClose={() => setRenamingChat(null)}
-          onRename={(name) => {
-            const chat = renamingChat;
-            setRenamingChat(null);
-            void commitRename(chat, name);
-          }}
-        />
-      )}
-      {/* One naming dialog for both fork paths — the sidebar's whole-chat fork
-          and the transcript rail's fork-from-here (#451). The request object is
-          read into a local BEFORE it is cleared, so `fromUuid` survives the
-          close: dropping it here would fork the entire transcript under the
-          right name, with nothing in the UI to show for it. */}
-      {forkRequest && (
-        <ForkChatModal
-          open
-          chatName={forkRequest.chat.name}
-          onClose={() => setForkRequest(null)}
-          onFork={(name) => {
-            const { chat, fromUuid } = forkRequest;
-            setForkRequest(null);
-            void commitFork(chat, name, fromUuid);
-          }}
-        />
-      )}
-      {/* Transient outcome of the native-chat adoption (#588). Rendered
-          unconditionally — `Toast` is a no-op while there is no message — and at
-          the route level rather than inside the sidebar so it is not clipped by
-          the sidebar's own scroll containers. */}
-      {/* Confirm what an adoption would bring in, before it brings it in (#660). */}
-      <AdoptChatsModal
-        open={adoptOpen}
-        adoptable={adoptable}
-        busy={adopting}
-        onClose={() => setAdoptOpen(false)}
-        onAdopt={(sessionIds) => void confirmAdopt(sessionIds)}
-      />
-      <Toast
-        message={toast?.message ?? null}
-        tone={toast?.tone}
-        onDismiss={dismissToast}
-        action={toast?.action}
-        // Longer than the default 6s when an Undo is on offer: six seconds is
-        // enough to read an outcome, not to decide to reverse it.
-        durationMs={toast?.action ? 12000 : undefined}
+      <ChatDialogs
+        actions={chatActions}
+        adoption={adoption}
+        slug={slug}
+        upsert={upsert}
+        navigate={navigate}
+        promotingChat={promotingChat}
+        setPromotingChat={setPromotingChat}
+        forkRequest={forkRequest}
+        setForkRequest={setForkRequest}
+        commitFork={commitFork}
       />
     </div>
   );
