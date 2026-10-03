@@ -211,6 +211,23 @@ describe("useFavicon — live status dot (#958 part 3)", () => {
     expect(document.head.innerHTML).toBe(shipped);
   });
 
+  it("retries a failed shipped-icon load on the next status change instead of caching the failure", async () => {
+    let shippedOk = false;
+    loads = (src) => (src === "/icons/favicon-32.png" ? shippedOk : true);
+    const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), {
+      initialProps: { b: DEFAULT_BRAND, dot: "running" },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    // Failed: the shipped icons stay (the title still carries the status).
+    expect(document.head.innerHTML).toBe(shipped);
+    shippedOk = true;
+    rerender({ b: DEFAULT_BRAND, dot: "unread" });
+    await waitFor(() => expect(icon32()).toBe(`data:image/png;32;image:/icons/favicon-32.png;dot:${GREEN}`));
+    // …and the status that failed before draws now too.
+    rerender({ b: DEFAULT_BRAND, dot: "running" });
+    await waitFor(() => expect(icon32()).toBe(`data:image/png;32;image:/icons/favicon-32.png;dot:${ORANGE}`));
+  });
+
   it("leaves the shipped icons alone, without throwing, when there is no canvas", async () => {
     canvasAvailable = false;
     renderHook(() => useFavicon(DEFAULT_BRAND, "running"));

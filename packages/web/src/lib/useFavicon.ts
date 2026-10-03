@@ -145,8 +145,16 @@ export function useFavicon(brand: Brand, dot: TabDot | null = null): void {
     const loadShipped = () => {
       if (!shipped.current) {
         const href = shippedIconHref();
-        // Same-origin, so drawing it never taints the canvas.
-        shipped.current = href ? loadImage(href, false).catch(() => null) : Promise.resolve(null);
+        // Same-origin, so drawing it never taints the canvas. A FAILED load is
+        // not cached: the next status change tries again (a blip mid-deploy
+        // must not cost the dot for the rest of the page's life).
+        const attempt: Promise<HTMLImageElement | null> = href
+          ? loadImage(href, false).catch(() => {
+              if (shipped.current === attempt) shipped.current = null;
+              return null;
+            })
+          : Promise.resolve(null);
+        shipped.current = attempt;
       }
       return shipped.current;
     };
@@ -158,7 +166,9 @@ export function useFavicon(brand: Brand, dot: TabDot | null = null): void {
     }
     let cancelled = false;
     void out.then((hrefs) => {
-      perBase.set(key, hrefs);
+      // Only a drawn result is memoised; a null here is a failed shipped-icon
+      // load, which the next status change should retry rather than replay.
+      if (hrefs) perBase.set(key, hrefs);
       if (!cancelled) apply(hrefs);
     });
     return () => {

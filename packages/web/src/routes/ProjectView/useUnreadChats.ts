@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import {
   readLastSeen,
@@ -189,8 +189,12 @@ export function useUnreadChats({
   // The set of unread chats, re-derived whenever the list, the focused chat, a
   // live completion, or a mark-seen changes. The currently-open chat is never
   // unread — UNLESS its mark-seen is deferred because the tab is hidden (#958),
-  // in which case nobody has seen it and it is judged like any other. Otherwise a chat is unread if the user manually flagged it (#458), it
-  // was live-flagged this session, or its server-reported last completed-turn time
+  // in which case nobody has seen it and it is judged like any other. That is
+  // what the chat page's `✓ ` reports: "this chat is unread while you're on it
+  // in a background tab" — a turn that landed while hidden, OR an already-unread
+  // chat opened in a background tab (middle-click). Both are intended.
+  // Otherwise a chat is unread if the user manually flagged it (#458), it was
+  // live-flagged this session, or its server-reported last completed-turn time
   // is newer than lastSeen.
   const unread = useMemo(() => {
     const s = new Set<string>();
@@ -235,12 +239,26 @@ export function useUnreadChats({
   // that raced a `visibilitychange` can't mark a hidden tab seen. The clear is an
   // identity updater: the open effect above may have queued a deferral for a NEW
   // focused chat in this same commit, and that one must survive.
-  useEffect(() => {
+  //
+  // A LAYOUT effect, so the mark lands before the browser paints the render the
+  // `visibilitychange` caused: the `✓ ` / unread cue would otherwise show for one
+  // frame on return. Safe here: it only sets state (re-rendered synchronously,
+  // still pre-paint) and fires the `/seen` POST, which is async; it reads no
+  // layout, and nothing downstream depends on it running after paint.
+  useLayoutEffect(() => {
     if (!deferred) return;
     const stillFocused = view === "chat" && deferred.id === activeSession;
     if (stillFocused && isPageHidden()) return;
     setDeferred((d) => (d === deferred ? null : d));
-    if (stillFocused) markSeen(deferred.id, deferred.keepUnread ? { keepUnread: true } : undefined);
+    if (!stillFocused) return;
+    // A deferred OPEN is an explicit seen, so it clears a manual "mark unread"
+    // (#458) — including one set from another tab or device while this tab was
+    // hidden. Deliberate: the user is now actually looking at the chat, which is
+    // exactly what an explicit seen means, and the same thing opening it in a
+    // visible tab would have done. #608's "intent beats inference" is preserved
+    // for the INFERRED flavour (a turn landing while hidden), which still keeps
+    // the flag via `keepUnread`.
+    markSeen(deferred.id, deferred.keepUnread ? { keepUnread: true } : undefined);
   }, [deferred, visible, view, activeSession, markSeen]);
 
   // Live turn-complete detection for chats WITHOUT a mounted pane (the sidebar
