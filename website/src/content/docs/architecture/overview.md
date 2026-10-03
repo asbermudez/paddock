@@ -487,7 +487,11 @@ into the **static herdctl agent config** by `browserMcpServers()` (defined in
 `herdctl-agent-names.ts`, called from `herdctl-agent-config.ts`), gated on
 `cfg.browserMcp` (`PADDOCK_BROWSER_MCP`, default
 off). It is scoped per *instance*, not per turn, so a box without the browser stack
-leaves it off and there are no failed spawns.
+leaves it off and there are no failed spawns. Its one host-dependent argument is a
+`--config` switching Chromium to hardware GL (#964): `probeBrowserGpu()`
+(`browser-gpu.ts`) runs once in `buildApp`, and only when `/dev/dri/renderD128`
+opens and the devbox image's config file exists is the path handed to
+`HerdctlService` and on to both builders. A `docker: true` project never gets it.
 
 The same `mcp_servers` key is how the user's OWN servers arrive under
 `claude.mcpServers: host` (#691, `claude-mcp.ts`): paddock reads `~/.claude.json`
