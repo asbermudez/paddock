@@ -7,6 +7,18 @@ import {
   setServerLastSeen,
 } from "../../lib/lastSeen";
 import type { Chat } from "../../lib/types";
+import { isPageHidden, usePageVisible } from "../../lib/usePageVisible";
+
+/**
+ * An automatic mark-seen held back because the tab was hidden (#958). `keepUnread`
+ * is the #608 inferred/explicit distinction, carried so the eventual mark is the
+ * one that would have happened: an explicit seen (you OPENED it) outranks an
+ * inferred one (a turn landed while it was open), so merging two keeps explicit.
+ */
+interface DeferredSeen {
+  id: string;
+  keepUnread: boolean;
+}
 
 /**
  * Unread affordance (#160), extracted from ProjectView.tsx (issue #403). A chat
@@ -30,6 +42,14 @@ import type { Chat } from "../../lib/types";
  * whole-subtree sibling `markManySeen` (#508), and the derived `unread` set.
  * `onSeen` MUST be stable (a `useCallback`) — markSeen depends on it, and the
  * auto-mark-seen effect depends on markSeen.
+ *
+ * Seen only while visible (#958): the two AUTOMATIC marks — opening the chat,
+ * and its turn landing while it is open — are deferred while the tab is hidden
+ * (a background tab, a middle-clicked "open in new tab"), and performed on the
+ * next `visibilitychange` to visible IF the chat is still the focused one. While
+ * deferred, the focused chat is allowed to be unread like any other, so the tab's
+ * status, the sidebar and the fleet strip all say "a reply landed you haven't
+ * seen". Explicit marks (a click) are not deferred; a click implies visibility.
  */
 export function useUnreadChats({
   slug,
@@ -61,6 +81,8 @@ export function useUnreadChats({
 } {
   const [liveUnread, setLiveUnread] = useState<ReadonlySet<string>>(new Set());
   const [seenVersion, setSeenVersion] = useState(0);
+  const [deferred, setDeferred] = useState<DeferredSeen | null>(null);
+  const visible = usePageVisible();
   /**
    * Mark a chat seen. `keepUnread` makes it an INFERRED seen (#608): the
    * lastSeen watermark still advances, but a manual "mark unread" override
@@ -87,6 +109,9 @@ export function useUnreadChats({
         setSeenVersion((v) => v + 1);
       });
       if (!keepUnread) onSeen?.(sessionId);
+      // An explicit mark supersedes a deferred one for the same chat — there is
+      // nothing left to do when the tab comes back.
+      if (!keepUnread) setDeferred((d) => (d?.id === sessionId ? null : d));
       setLiveUnread((prev) => {
         if (!prev.has(sessionId)) return prev;
         const next = new Set(prev);
@@ -162,14 +187,15 @@ export function useUnreadChats({
   }, [chats]);
 
   // The set of unread chats, re-derived whenever the list, the focused chat, a
-  // live completion, or a mark-seen changes. The currently-open chat is NEVER
-  // unread. Otherwise a chat is unread if the user manually flagged it (#458), it
+  // live completion, or a mark-seen changes. The currently-open chat is never
+  // unread — UNLESS its mark-seen is deferred because the tab is hidden (#958),
+  // in which case nobody has seen it and it is judged like any other. Otherwise a chat is unread if the user manually flagged it (#458), it
   // was live-flagged this session, or its server-reported last completed-turn time
   // is newer than lastSeen.
   const unread = useMemo(() => {
     const s = new Set<string>();
     for (const c of chats) {
-      if (view === "chat" && c.sessionId === activeSession) continue;
+      if (view === "chat" && c.sessionId === activeSession && deferred?.id !== c.sessionId) continue;
       if (c.unread || liveUnread.has(c.sessionId)) {
         s.add(c.sessionId);
         continue;
@@ -182,13 +208,40 @@ export function useUnreadChats({
     return s;
     // seenVersion is a manual dep: readLastSeen reads a module-level map, which
     // isn't reactive, so a markSeen bumps it to force this recompute.
-  }, [chats, view, activeSession, liveUnread, seenVersion]);
+  }, [chats, view, activeSession, liveUnread, seenVersion, deferred]);
+
+  // Hold an automatic mark back until the tab is visible (#958). Merging keeps
+  // the explicit flavour if either mark was explicit (see `DeferredSeen`).
+  const defer = useCallback((id: string, keepUnread: boolean) => {
+    setDeferred((d) =>
+      d?.id === id ? (d.keepUnread && !keepUnread ? { id, keepUnread } : d) : { id, keepUnread },
+    );
+  }, []);
 
   // Mark the focused chat seen on open / deep-link / reload (write lastSeen=now),
   // so viewing a chat clears its unread cue and keeps it read across reloads.
+  // Visibility is READ here, not a dependency: re-marking on every return to the
+  // tab would spend a manual "mark unread" set on the open chat (#608).
   useEffect(() => {
-    if (view === "chat" && activeSession) markSeen(activeSession);
-  }, [view, activeSession, markSeen]);
+    if (view !== "chat" || !activeSession) return;
+    if (isPageHidden()) defer(activeSession, false);
+    else markSeen(activeSession);
+  }, [view, activeSession, markSeen, defer]);
+
+  // Settle a deferred mark. Focus moved off the chat (a redirect, a deletion) →
+  // drop it: it belongs to a chat nobody is looking at, which stays unread. Tab
+  // visible with the chat still focused → perform it, as the flavour recorded.
+  // `visible` is the re-run trigger; the live read is what decides, so a render
+  // that raced a `visibilitychange` can't mark a hidden tab seen. The clear is an
+  // identity updater: the open effect above may have queued a deferral for a NEW
+  // focused chat in this same commit, and that one must survive.
+  useEffect(() => {
+    if (!deferred) return;
+    const stillFocused = view === "chat" && deferred.id === activeSession;
+    if (stillFocused && isPageHidden()) return;
+    setDeferred((d) => (d === deferred ? null : d));
+    if (stillFocused) markSeen(deferred.id, deferred.keepUnread ? { keepUnread: true } : undefined);
+  }, [deferred, visible, view, activeSession, markSeen]);
 
   // Live turn-complete detection for chats WITHOUT a mounted pane (the sidebar
   // can't rely on ChatPane's onTurnComplete, which only fires for the focused
@@ -199,7 +252,13 @@ export function useUnreadChats({
     const prev = prevRunning.current;
     for (const id of prev) {
       if (runningSessions.has(id)) continue; // still running
-      if (view === "chat" && id === activeSession) {
+      if (view === "chat" && id === activeSession && isPageHidden()) {
+        // Completed while focused but the tab is hidden (#958): nobody watched
+        // it land. Flag it like any unseen reply, and leave the (inferred) mark
+        // for when the tab is shown.
+        setLiveUnread((s) => (s.has(id) ? s : new Set(s).add(id)));
+        defer(id, true);
+      } else if (view === "chat" && id === activeSession) {
         // Completed while focused → stays read, but this is an INFERRED seen, so
         // it must not spend a manual unread flag the user set seconds earlier
         // (#608) — including one set from another client via the API.
@@ -209,7 +268,7 @@ export function useUnreadChats({
       }
     }
     prevRunning.current = runningSessions;
-  }, [runningSessions, view, activeSession, markSeen]);
+  }, [runningSessions, view, activeSession, markSeen, defer]);
 
   return { markSeen, markManySeen, unread };
 }

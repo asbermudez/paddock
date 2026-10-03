@@ -6,6 +6,7 @@ import type { Project } from "../lib/types";
 import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
 import { chipForeground, sidebarChipOverride } from "../lib/brandChip";
 import { useFavicon } from "../lib/useFavicon";
+import { TabStatusContext, tabStatusDot, useTabStatusState } from "../lib/tabStatus";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import {
@@ -59,6 +60,8 @@ interface ProjectBadge {
 function useProjectBadges(workspaces: Project[]): {
   badges: Map<string, ProjectBadge>;
   unreadChats: FinishedChat[];
+  /** sessionId → workspace key of every running turn — the tab status reads it (#958). */
+  active: ReadonlyMap<string, string>;
 } {
   // sessionId -> workspace key for every currently-running turn (from the WS set).
   const [active, setActive] = useState<ReadonlyMap<string, string>>(new Map());
@@ -164,7 +167,7 @@ function useProjectBadges(workspaces: Project[]): {
     // Newest first — the fleet readout lays these out left to right after the
     // running channels, so the reply that landed a moment ago sits nearest them.
     unreadChats.sort((a, b) => b.at - a.at);
-    return { badges, unreadChats };
+    return { badges, unreadChats, active };
     // `version` is the recompute trigger (completionsRef mutates in place).
   }, [active, version]);
 }
@@ -182,8 +185,6 @@ export function AppShell() {
   const location = useLocation();
   const brand = getBrand();
   const openapi = getOpenApi();
-  // The tab icon is the brand chip, so instances can be told apart (#958).
-  useFavicon(brand);
   // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
   const sidenav = usePaneWidth(SIDENAV_PANE);
 
@@ -229,7 +230,13 @@ export function AppShell() {
     () => (rootWorkspace ? [...projects, rootWorkspace] : projects),
     [projects, rootWorkspace],
   );
-  const { badges, unreadChats } = useProjectBadges(badgeWorkspaces);
+  const { badges, unreadChats, active } = useProjectBadges(badgeWorkspaces);
+  // Live tab status (#958 part 3): the routed page publishes what it is about,
+  // and this resolves it against the same badges + running set the sidebar uses.
+  const tabStatus = useTabStatusState({ badges, active });
+  // The tab icon is the brand chip, so instances can be told apart (#958), with
+  // the status dot on top.
+  useFavicon(brand, tabStatusDot(tabStatus.status));
   // `""` is the ROOT workspace's key — a real key, and the reason this reads
   // `ROOT_KEY` rather than a falsy-guarded lookup.
   const rootBadge = badges.get(ROOT_KEY);
@@ -494,7 +501,9 @@ export function AppShell() {
         <FleetReadout unread={fleetUnread} finished={unreadChats} />
         <main className="min-h-0 min-w-0 flex-1 overflow-hidden">
           <Suspense fallback={<RouteFallback />}>
-            <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
+            <TabStatusContext.Provider value={tabStatus}>
+              <Outlet context={{ openNav: () => setNavOpen(true) } satisfies ShellOutletContext} />
+            </TabStatusContext.Provider>
           </Suspense>
         </main>
       </div>
