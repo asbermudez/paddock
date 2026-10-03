@@ -40,9 +40,9 @@ describe("formatDocumentTitle (#958)", () => {
     );
   });
 
-  it("collapses adjacent duplicate parts", () => {
-    expect(formatDocumentTitle({ parts: ["Files", "files", "hushpod"], brand: "B" })).toBe(
-      "Files · hushpod — B",
+  it("never collapses equal parts: a chat named like its project stays distinct from Home", () => {
+    expect(formatDocumentTitle({ parts: ["hushpod", "hushpod"], brand: "House" })).toBe(
+      "hushpod · hushpod — House",
     );
   });
 

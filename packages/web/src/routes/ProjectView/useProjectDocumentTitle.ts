@@ -1,7 +1,6 @@
 import type { Chat, Project } from "../../lib/types";
 import { useProjects } from "../../lib/projects-context";
-import { sameTitleName, useDocumentTitle, type TitlePart } from "../../lib/documentTitle";
-import { getBrand } from "../../lib/brand";
+import { useDocumentTitle, type TitlePart } from "../../lib/documentTitle";
 import { usePublishTabScope, type TabScope } from "../../lib/tabStatus";
 import type { ProjectViewTab } from "./urls";
 
@@ -14,18 +13,17 @@ import type { ProjectViewTab } from "./urls";
  *   changes   `feed.ts · Changes · hushpod`
  *   other     `History · hushpod`, `Settings · hushpod`, `Triggers · hushpod`
  *
- * — each followed by ` — <brand>` (see `formatDocumentTitle`). The root
- * workspace's name stands in for the project's, and is dropped when it equals the
- * brand, so root Home on an instance named after its directory is just the brand.
- * A PROJECT that shares the brand's name keeps it (`X · paddock — Paddock`), or
- * its chats would be indistinguishable from root chats.
+ * — each followed by ` — <brand>` (see `formatDocumentTitle`). The ROOT
+ * workspace's name is always omitted — the brand already names the instance, and
+ * since #921 the root defaults to "Home", which would read `Home — Paddock`. So
+ * `/` is just the brand, `/chat/:id` is `Fix the leaking tap — Paddock`, `/files`
+ * is `Files — Paddock`. A PROJECT always keeps its name, even one named like the
+ * brand (`X · paddock — Paddock`), so its chats never read as root chats.
  */
 export interface ProjectTitleInput {
   view: ProjectViewTab;
-  /** Is this the ROOT workspace? Only the root's name is dropped when it is the brand. */
+  /** Is this the ROOT workspace? Its name never appears in the title. */
   root: boolean;
-  /** The instance brand name, for that comparison. */
-  brand: string;
   /**
    * The workspace's display name, best available: the loaded project's name,
    * else the sidebar's cached copy, else (for a project) its slug. Never
@@ -78,9 +76,8 @@ function chatPart(input: ProjectTitleInput): TitlePart {
 }
 
 export function projectTitleParts(input: ProjectTitleInput): TitlePart[] {
-  const { view, root, brand } = input;
-  const workspaceName =
-    root && sameTitleName(input.workspaceName, brand) ? "" : input.workspaceName;
+  const { view, root } = input;
+  const workspaceName = root ? "" : input.workspaceName;
   switch (view) {
     case "home":
       return [workspaceName];
@@ -97,7 +94,7 @@ export function projectTitleParts(input: ProjectTitleInput): TitlePart[] {
 
 /** What `ProjectView` hands over — raw state; the resolving happens here. */
 export interface ProjectDocumentTitleState
-  extends Omit<ProjectTitleInput, "workspaceName" | "activeChat" | "loaded" | "brand"> {
+  extends Omit<ProjectTitleInput, "workspaceName" | "activeChat" | "loaded"> {
   slug: string;
   project: Project | null;
   chats: readonly Chat[];
@@ -134,7 +131,11 @@ export function projectTabScope(input: {
 
 export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void {
   const { projects, rootWorkspace } = useProjects();
-  const { root, slug, project, chats, lastActiveChat, activeSession } = state;
+  const { root, slug, chats, lastActiveChat, activeSession } = state;
+  // `ProjectView` stays mounted across a project switch and clears `project` in
+  // an effect, so for at least one commit (longer if the old fetch lands late)
+  // it still holds the PREVIOUS project. Only trust it when it is this route's.
+  const project = state.project?.slug === slug ? state.project : null;
   // Best available name: the loaded detail, else the sidebar's cached copy
   // (present before the detail lands), else the slug itself.
   const cached = root ? rootWorkspace : projects.find((p) => p.slug === slug);
@@ -149,7 +150,6 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
       workspaceName,
       activeChat,
       loaded: project !== null,
-      brand: getBrand().name,
     }),
     { prefix },
   );

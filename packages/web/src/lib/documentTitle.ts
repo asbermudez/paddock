@@ -56,25 +56,14 @@ export interface DocumentTitleInput {
 /**
  * Build a title. Pure, so the status prefix work can reuse it.
  *
- * Adjacent parts that read the same (case-insensitive) collapse to one. A part
- * equal to the brand is deliberately KEPT: a project named like the instance
- * must stay distinguishable from the root. Dropping the ROOT workspace's name
- * when it is the brand is the caller's decision (see `useProjectDocumentTitle`).
+ * Parts are rendered as given — no de-duplication. A chat named like its
+ * project (`hushpod · hushpod`) must not collapse into the project's Home title,
+ * and a part equal to the brand must stay so a project named like the instance
+ * is distinguishable from the root. Which parts to include is the caller's call.
  */
-/** Case-insensitive name equality, as the title's de-duplication uses it. */
-export function sameTitleName(a: string, b: string): boolean {
-  return cleanTitlePart(a).toLocaleLowerCase() === cleanTitlePart(b).toLocaleLowerCase();
-}
-
 export function formatDocumentTitle({ parts, brand, prefix = "" }: DocumentTitleInput): string {
   const brandName = cleanTitlePart(brand) || "Paddock";
-  const kept: string[] = [];
-  for (const raw of parts) {
-    const part = cleanTitlePart(raw);
-    if (!part) continue;
-    if (kept.length && sameTitleName(kept[kept.length - 1], part)) continue;
-    kept.push(part);
-  }
+  const kept = parts.map((p) => cleanTitlePart(p)).filter(Boolean);
   const body = kept.length ? `${kept.join(TITLE_PART_SEP)}${TITLE_BRAND_SEP}${brandName}` : brandName;
   return `${prefix}${body}`;
 }
