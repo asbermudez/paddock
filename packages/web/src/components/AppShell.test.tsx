@@ -302,6 +302,17 @@ describe("AppShell: area grouping + subheaders", () => {
     expect(within(link).getByText("+1")).toBeInTheDocument();
     expect(within(link).queryByText("hvac")).not.toBeInTheDocument();
   });
+
+  it("gives each row a decorative initial chip without changing its accessible name (#958)", () => {
+    mockProjects = [makeProject({ slug: "beacon", name: "Beacon" })];
+    renderShell();
+    const link = screen.getByRole("link", { name: /^Beacon/ });
+    const chip = within(link).getByTestId("project-chip");
+    expect(chip).toHaveTextContent("B");
+    expect(chip).toHaveAttribute("aria-hidden", "true");
+    // The chip's "B" must not leak into the name ("BBeacon").
+    expect(screen.queryByRole("link", { name: /^BBeacon/ })).not.toBeInTheDocument();
+  });
 });
 
 describe("AppShell: per-project badges (#161)", () => {

@@ -16,7 +16,8 @@ import {
 } from "../lib/lastSeen";
 import { TagPill } from "./TagPill";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
-import { CogIcon, FolderIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
+import { CogIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
+import { ProjectChip } from "./ProjectChip";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
@@ -571,17 +572,16 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
     >
       <span className="flex items-center justify-between gap-2">
         <span className="flex min-w-0 items-center gap-1.5">
-          <FolderIcon
-            width={13}
-            height={13}
-            className="shrink-0 text-fg-subtle group-hover:text-fg-muted"
-          />
+          {/* The project's chip (#958): its initial on a colour hashed from the
+              slug, the same derivation the favicon uses. 16px sits inside the
+              20px `text-sm` line box, so the row is no taller than it was. */}
+          <ProjectChip slug={p.slug} name={p.name} />
           <span className="truncate font-medium">{p.name}</span>
         </span>
         <ProjectBadges badge={badge} />
       </span>
       {p.domain.length > 0 && (
-        <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[18px]">
+        <span className="flex min-w-0 items-center gap-1 overflow-hidden pl-[22px]">
           {p.domain.slice(0, 2).map((d) => (
             <TagPill key={d} tag={d} className="max-w-[7rem] truncate" />
           ))}
