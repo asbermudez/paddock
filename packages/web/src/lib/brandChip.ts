@@ -27,9 +27,12 @@ import { contrastRatio, inSrgbGamut, oklchToRgb, resolveColor, toHex, type Rgba 
 /**
  * Lightness and chroma of a derived chip. Fixed, so only the hue varies with
  * the name: mid lightness reads as a solid tile on both Chrome's light (~0.9 L)
- * and dark (~0.25 L) tab strips, and keeps a white glyph legible on top.
+ * and dark (~0.25 L) tab strips. 0.53 is chosen so WHITE text clears 4.5:1 on
+ * every hue (worst case ~4.95:1, measured over all 360) — the sidebar chip
+ * renders a letter logo at text-sm, which is body-size text. At 0.56 the worst
+ * hues fell to ~4.36:1.
  */
-export const DERIVED_CHIP_L = 0.56;
+export const DERIVED_CHIP_L = 0.53;
 export const DERIVED_CHIP_C = 0.14;
 
 /**
@@ -117,12 +120,18 @@ export function sidebarChipOverride(brand: Brand): string | null {
 
 /**
  * Foreground for a text glyph on a chip of `color`: white (what the chip has
- * always used, `--accent-fg`) as long as it clears the 3:1 large-text floor —
- * the glyph is bold and fills most of the tile — else black, for an operator's
- * pale accent. Emoji ignore it; a plain letter like "H" depends on it.
+ * always used, `--accent-fg`) as long as it clears `minContrast`, else black,
+ * for an operator's pale accent. Emoji ignore it; a plain letter like "H"
+ * depends on it.
+ *
+ * The default floor is 4.5:1 — the sidebar chip draws its letter at text-sm,
+ * which is body text. The favicon passes 3: its glyph fills three quarters of
+ * the icon, and at 3 the default terracotta (~4.2:1) keeps the white letter the
+ * sidebar chip has always shown on it. Every derived colour clears 4.5 either
+ * way, so for a renamed instance the two always agree.
  */
-export function chipForeground(color: string): "white" | "black" {
+export function chipForeground(color: string, minContrast = 4.5): "white" | "black" {
   const bg = parse(color);
   if (!bg) return "white";
-  return contrastRatio({ r: 1, g: 1, b: 1, a: 1 }, bg) >= 3 ? "white" : "black";
+  return contrastRatio({ r: 1, g: 1, b: 1, a: 1 }, bg) >= minContrast ? "white" : "black";
 }

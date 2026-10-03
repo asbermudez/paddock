@@ -33,7 +33,8 @@ import {
 
 /** Draw both rasters, or null if either cannot be drawn. */
 export function renderFaviconHrefs(content: ChipContent, color: string): FaviconHrefs | null {
-  const foreground = chipForeground(color);
+  // 3:1 — the glyph fills most of the icon; see chipForeground.
+  const foreground = chipForeground(color, 3);
   const large = renderFaviconChip({ content, color, foreground, size: FAVICON_SIZES.large });
   const small = large && renderFaviconChip({ content, color, foreground, size: FAVICON_SIZES.small });
   return large && small ? { large, small, type: "image/png" } : null;

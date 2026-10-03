@@ -11,7 +11,7 @@ import {
   nameHue,
   sidebarChipOverride,
 } from "./brandChip";
-import { resolveColor, rgbToOklch } from "./color";
+import { contrastRatio, resolveColor, rgbToOklch } from "./color";
 
 const HEX = /^#[0-9a-f]{6}$/;
 
@@ -48,8 +48,20 @@ describe("deriveChipColor", () => {
     expect(deriveChipColor("House")).not.toBe(deriveChipColor("Homelab"));
   });
 
-  it("keeps a white glyph legible (>= 3:1) for every hue", () => {
-    for (let i = 0; i < 200; i++) expect(chipForeground(deriveChipColor(`instance-${i}`))).toBe("white");
+  it("keeps white text at >= 4.5:1 (body text) for every name and every hue", () => {
+    const white = { r: 1, g: 1, b: 1, a: 1 };
+    for (let i = 0; i < 200; i++) {
+      const hex = deriveChipColor(`instance-${i}`);
+      expect(contrastRatio(white, resolveColor(hex, {}))).toBeGreaterThanOrEqual(4.5);
+      expect(chipForeground(hex)).toBe("white");
+    }
+    // The hash only ever yields integer hues, so all 360 is exhaustive.
+    const byHue = new Map<number, string>();
+    for (let k = 0; byHue.size < 360 && k < 50_000; k++) if (!byHue.has(nameHue(`n${k}`))) byHue.set(nameHue(`n${k}`), `n${k}`);
+    expect(byHue.size).toBe(360);
+    for (const name of byHue.values()) {
+      expect(contrastRatio(white, resolveColor(deriveChipColor(name), {}))).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 
@@ -100,8 +112,10 @@ describe("brandChipColor / sidebarChipOverride", () => {
 });
 
 describe("chipForeground", () => {
-  it("white on the default and on dark accents, black on a pale one", () => {
-    expect(chipForeground(DEFAULT_BRAND.accent)).toBe("white");
+  it("white on dark accents, black on a pale one; the floor is 4.5 unless the caller lowers it", () => {
+    // Terracotta is ~4.2:1 against white: below body text, above the favicon's 3.
+    expect(chipForeground(DEFAULT_BRAND.accent)).toBe("black");
+    expect(chipForeground(DEFAULT_BRAND.accent, 3)).toBe("white");
     expect(chipForeground("#1e3a8a")).toBe("white");
     expect(chipForeground("#ffd700")).toBe("black");
     expect(chipForeground("not a colour")).toBe("white");
