@@ -203,12 +203,6 @@ export function AppShell() {
     setNavOpen(false);
   }, [location.pathname]);
 
-  // Keep the document title in sync with the brand name (covers dev, where the
-  // server doesn't inject the <title>; production already ships it injected).
-  useEffect(() => {
-    document.title = brand.name;
-  }, [brand.name]);
-
   // Group the sidebar list by area, in the same order as the landing page.
   // Subheaders only appear when there's more than one area in play.
   const sections = useMemo(() => {

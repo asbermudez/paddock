@@ -46,6 +46,7 @@ import { useChatActions } from "./ProjectView/useChatActions";
 import { ChatDialogs } from "./ProjectView/ChatDialogs";
 import { useForkActions } from "./ProjectView/useForkActions";
 import { useWorkspaceNav } from "./ProjectView/useWorkspaceNav";
+import { useProjectDocumentTitle } from "./ProjectView/useProjectDocumentTitle";
 
 /**
  * The active view ("home" | "chat" | "files") and the selected chat/file are
@@ -706,6 +707,10 @@ export function ProjectView({
           resumable: true,
         }
     : null;
+
+  // The tab's title (#958) — above the early returns, so it's never conditional.
+  useProjectDocumentTitle({ root, slug, project, chats, lastActiveChat: lastActiveChatRef.current,
+    view, activeSession, pendingChat, filesSubpath, changeFile: routeChangeFile });
 
   // Deep-link behavior: when the open chat is archived, expand the Archived
   // section so the user can see where they are — once per session, so a manual

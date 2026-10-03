@@ -3,6 +3,7 @@ import type { ShellOutletContext } from "../components/AppShell";
 import { InstanceConfigForm } from "../components/InstanceConfigForm";
 import { MigrationOfferCard } from "../components/MigrationOffer";
 import { CogIcon, MenuIcon } from "../components/icons";
+import { useDocumentTitle } from "../lib/documentTitle";
 
 /**
  * The instance **Config** screen (issue #385) — a top-level admin surface over
@@ -24,6 +25,7 @@ import { CogIcon, MenuIcon } from "../components/icons";
 export function InstanceConfigPage() {
   const shell = useOutletContext<ShellOutletContext | null>();
   const openNav = shell?.openNav ?? (() => {});
+  useDocumentTitle(["Config"]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

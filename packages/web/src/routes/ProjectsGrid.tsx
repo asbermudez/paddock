@@ -18,6 +18,7 @@ import {
   XIcon,
 } from "../components/icons";
 import { relativeTime } from "../lib/format";
+import { useDocumentTitle } from "../lib/documentTitle";
 import { areaBlurb, areaLabel, orderAreaSlugs } from "../lib/areas";
 import { gridUrl } from "./ProjectView/urls";
 
@@ -42,6 +43,8 @@ export function ProjectsGrid({ filterTag }: { filterTag?: string } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [deleting, setDeleting] = useState<Project | null>(null);
   const navigate = useNavigate();
+  // `/tags/:tag` reads `#infra — Brand`; the unfiltered grid `Projects — Brand` (#958).
+  useDocumentTitle([filterTag ? `#${filterTag}` : "Projects"]);
   // Where "back to the grid" points — root Home, which is where the unfiltered
   // list lives now that it is a section of that pane rather than a tab.
   const grid = gridUrl();
