@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
+import { deriveChipColor } from "../lib/brandChip";
 import { makeProject } from "../test/factories";
 import {
   forgetChats,
@@ -745,5 +746,45 @@ describe("AppShell: the badge forgets chats that are gone (#732, #734)", () => {
         within(screen.getByRole("link", { name: /Doomed/ })).queryByLabelText(/unread/i),
       ).not.toBeInTheDocument(),
     );
+  });
+});
+
+describe("AppShell: brand chip colour (#958)", () => {
+  type WithConfig = { __PADDOCK_CONFIG__?: unknown };
+  const chips = () => screen.getAllByTestId("brand-chip");
+
+  it("an all-defaults instance keeps the accent chip and the shipped favicon", () => {
+    const before = document.head.innerHTML;
+    renderShell();
+    for (const chip of chips()) expect(chip.getAttribute("style")).toBeNull();
+    expect(document.head.innerHTML).toBe(before);
+  });
+
+  it("a renamed instance on the default accent gets the name-derived chip colour", () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House" } };
+    try {
+      renderShell();
+      // Same colour the favicon is drawn in (jsdom normalises the hex to rgb()).
+      const hex = deriveChipColor("House");
+      const rgb = `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
+      for (const chip of chips()) {
+        expect(chip.style.backgroundColor).toBe(rgb);
+        expect(chip.style.color).toBe("white");
+      }
+      // The global accent seam is untouched.
+      expect(document.documentElement.style.getPropertyValue("--accent")).toBe("");
+    } finally {
+      delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+    }
+  });
+
+  it("an explicit accent leaves the chip on --accent", () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House", accent: "#3366cc" } };
+    try {
+      renderShell();
+      for (const chip of chips()) expect(chip.getAttribute("style")).toBeNull();
+    } finally {
+      delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+    }
   });
 });

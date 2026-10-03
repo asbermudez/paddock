@@ -219,9 +219,9 @@ Defaults preserve today's look; set these to tell several instances apart.
 
 | Variable | Default | Required | Purpose |
 |----------|---------|----------|---------|
-| `PADDOCK_BRAND_NAME` | `Paddock` | no | Wordmark + browser tab title. |
-| `PADDOCK_BRAND_LOGO` | `🐎` | no | An emoji/glyph, or a URL/path to an image (rendered as `<img>`). |
-| `PADDOCK_BRAND_ACCENT` | `#c2603c` | no | Accent **hue**. The hex is read for its position on the spectrum only: the active theme supplies the saturation and solves the lightness against its own surfaces to clear a WCAG AA floor, then repairs what it derives. It applies to anyone who has not picked their own colour in **Config → Appearance**, which overrides it per browser. See [Appearance](/configuration/appearance/). |
+| `PADDOCK_BRAND_NAME` | `Paddock` | no | The wordmark, and the suffix of every browser tab title (`Fix the leaking tap · hushpod — House`). With the accent left at the default, it also picks the tab icon's colour (see `PADDOCK_BRAND_ACCENT`). |
+| `PADDOCK_BRAND_LOGO` | `🐎` | no | An emoji/glyph, or a URL/path to an image (rendered as `<img>`). Drawn on the accent-coloured chip, it is also the browser-tab icon. An image the browser cannot draw onto a canvas (a cross-origin URL without CORS headers) is used as the tab icon as-is. |
+| `PADDOCK_BRAND_ACCENT` | `#c2603c` | no | Accent **hue**. The hex is read for its position on the spectrum only: the active theme supplies the saturation and solves the lightness against its own surfaces to clear a WCAG AA floor, then repairs what it derives. It applies to anyone who has not picked their own colour in **Config → Appearance**, which overrides it per browser. See [Appearance](/configuration/appearance/). Unlike the UI, the browser-tab icon uses this hex exactly. Left at the default, a renamed instance's tab icon and sidebar logo chip both get the same colour, picked from `PADDOCK_BRAND_NAME` out of a fixed palette of twelve (the rest of the UI keeps the theme's accent), so instances differ with no config. With an explicit accent, only the tab icon uses the exact hex; the sidebar chip follows the theme-adjusted accent. An instance with all three branding values at their defaults keeps the stock horse icon. |
 
 ## Voice dictation (Whisper)
 
