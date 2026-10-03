@@ -27,6 +27,7 @@ import {
 import { loadHostMcpSource } from "./claude-mcp.js";
 import { loadHostPlugins } from "./claude-plugins.js";
 import { declaredMcpNotices } from "./mcp-servers.js";
+import { probeBrowserGpu } from "./browser-gpu.js";
 import { installHerdctlLogBridge } from "./agent-errors.js";
 import { ProjectStore, ROOT_KEY } from "./projects.js";
 import { AttachmentStore } from "./attachments.js";
@@ -198,10 +199,16 @@ export async function buildApp(opts: BuildAppOptions = {}): Promise<BuiltApp> {
   // see `claude-plugins.ts` for why that is not the single lever #700 assumes.
   const hostPlugins = await loadHostPlugins(cfg);
   for (const notice of hostPlugins.notices) app.log[notice.level](notice.message);
+  // …and whether the browser MCP's Chromium can use a GPU (#964). Probed only
+  // when the browser is on; logged either way, because the fallback is silent —
+  // a missing device or package still renders, just on the CPU.
+  const browserGpu = cfg.browserMcp ? probeBrowserGpu() : undefined;
+  if (browserGpu) app.log.info(browserGpu.reason);
   const herdctl = new HerdctlService(
     cfg,
     { ...hostMcp.source, declared: cfg.mcpServers },
     hostPlugins.source,
+    browserGpu?.config,
   );
   const git = new GitService(cfg.projectsRoot, cfg.gitAuthor);
   const githubAuth = new GithubAuth(path.join(cfg.dataDir, "github-auth.json"), cfg.githubClientId);

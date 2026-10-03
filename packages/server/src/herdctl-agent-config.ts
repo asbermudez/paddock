@@ -83,6 +83,11 @@ import {
  * resolved once at boot by `claude-plugins.ts` and gated by `claude.instructions`
  * rather than `claude.mcpServers` — see that module for why. Keeper-only for the
  * same reasons, and empty unless the lever is on.
+ *
+ * `browserGpuConfig` is the hardware-GL `--config` for the browser MCP (#964),
+ * probed once at boot by `browser-gpu.ts` — undefined unless this host has a
+ * usable GPU and the devbox image's Mesa packages. Ignored for a `docker: true`
+ * project (see {@link browserMcpServers}).
  */
 export function buildAgentConfig(
   cfg: PaddockConfig,
@@ -90,6 +95,7 @@ export function buildAgentConfig(
   modelOverride?: string,
   mcpSources: McpSources = EMPTY_MCP_SOURCES,
   hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
+  browserGpuConfig?: string,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: keeperAgentName(project.slug),
@@ -165,7 +171,10 @@ export function buildAgentConfig(
   // unprivileged LXC) and someone else's `playwright` would almost certainly not
   // start here. A declared collision is warned about by name at boot
   // (`declaredMcpNotices`) so it is not silent.
-  const browser = browserMcpServers(cfg.browserMcp);
+  const browser = browserMcpServers(
+    cfg.browserMcp,
+    project.docker ? undefined : browserGpuConfig,
+  );
   const external = mcpServersFor(mcpSources, project.workingDir);
   const servers = { ...external, ...(browser ?? {}) };
   if (Object.keys(servers).length > 0) config.mcp_servers = servers;
@@ -332,12 +341,14 @@ export function buildSweeperConfig(
  * Runs in the project's WORKING dir (so a trigger's Bash/Write act on the same tree
  * the keeper does). A trigger that declares no tools gets `allowed_tools: []` — which
  * herdctl does not enforce as a deny-all; see {@link triggerToAgentToolConfig} (#647).
+ * `browserGpuConfig` is as for {@link buildAgentConfig}.
  */
 export function buildTriggerConfig(
   cfg: PaddockConfig,
   project: Project,
   triggerName: string,
   trigger: PaddockTrigger,
+  browserGpuConfig?: string,
 ): Record<string, unknown> & { name: string } {
   const config: Record<string, unknown> & { name: string } = {
     name: triggerAgentName(project.slug, triggerName),
@@ -357,7 +368,10 @@ export function buildTriggerConfig(
     ...triggerToAgentToolConfig(trigger.run),
   };
   if (project.docker) config.docker = { enabled: true };
-  const browser = browserMcpServers(cfg.browserMcp);
+  const browser = browserMcpServers(
+    cfg.browserMcp,
+    project.docker ? undefined : browserGpuConfig,
+  );
   if (browser) config.mcp_servers = browser;
   return config;
 }

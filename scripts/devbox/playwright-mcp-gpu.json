@@ -1,0 +1,7 @@
+{
+  "browser": {
+    "launchOptions": {
+      "args": ["--use-gl=angle", "--use-angle=gl-egl"]
+    }
+  }
+}

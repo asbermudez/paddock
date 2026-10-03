@@ -226,6 +226,27 @@ RUN npm install -g @playwright/mcp \
     && node "$(npm root -g)/@playwright/mcp/node_modules/playwright/cli.js" install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 
+# Hardware WebGL for that Chromium, when the host maps a GPU in (#964). The
+# layer above leaves Chromium on SwiftShader, ANGLE's CPU rasterizer: it ships
+# Mesa's DRI drivers (iris_dri.so etc.) but no system libEGL.so.1, and headless
+# ANGLE reaches the GPU through EGL — GLX needs an X server. Its bundled
+# libvulkan.so.1 knows only the SwiftShader ICD. Measured on an Intel UHD 630:
+# SwiftShader is 12.7x slower and 16x more CPU than this, and one WebGL page
+# took a 12-core host to load 22.
+#   - libegl1 + libegl-mesa0   unlock `--use-angle=gl-egl`, the path we use;
+#   - mesa-vulkan-drivers + libvulkan1   the system Vulkan ICDs, so
+#     `--use-angle=vulkan` reaches the GPU too. Optional, and most of the bytes.
+# Packages alone change nothing: Chromium still picks SwiftShader unless told
+# otherwise. The flags live in the config below, which Paddock passes to
+# `playwright-mcp` ONLY when /dev/dri/renderD128 opens (browser-gpu.ts). With no
+# device the flags would land on llvmpipe — more CPU than SwiftShader — so a
+# GPU-less host must keep today's defaults, and does.
+# After the Chromium layer on purpose, so it does not invalidate that cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libegl1 libegl-mesa0 mesa-vulkan-drivers libvulkan1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/devbox/playwright-mcp-gpu.json /etc/paddock/playwright-mcp-gpu.json
+
 # kubectl — the same "client only, no credentials" shape as the Docker CLI above
 # (#531). An agent asked "is the deploy healthy?" needs one binary to make a
 # cluster legible: describe a pod, tail logs, check a rollout. It cannot be added
