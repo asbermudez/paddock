@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
@@ -2475,5 +2475,137 @@ describe("ProjectView: tab strip placement (#919)", () => {
     await screen.findByRole("heading", { name: "Reactor" });
     // jsdom applies no CSS, so assert the class that does the hiding.
     expect(screen.getByTestId("workspace-tabs").parentElement).toHaveClass("hidden");
+  });
+});
+
+describe("ProjectView: document title (#958)", () => {
+  it("names the open chat and the project, most specific first", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", name: "hushpod" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Fix the leaking tap" })],
+      }),
+    );
+    renderAt("/projects/p/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Fix the leaking tap · hushpod — Paddock"));
+  });
+
+  it("shows the best available name while loading, never undefined", async () => {
+    // The detail never lands: the slug is all that is known.
+    apiFns.getProjectDetail.mockReturnValue(new Promise(() => {}));
+    renderAt("/projects/p/chat/s1");
+    expect(await screen.findByText(/Loading project/)).toBeInTheDocument();
+    expect(document.title).toBe("p — Paddock");
+  });
+
+  it("a project that fails to load still gets a sensible title", async () => {
+    apiFns.getProjectDetail.mockRejectedValue(new Error("Project not found"));
+    renderAt("/projects/missing/home");
+    expect(await screen.findByText("Project not found")).toBeInTheDocument();
+    expect(document.title).toBe("missing — Paddock");
+  });
+
+  it("an unknown chat id reads as a generic chat, without crashing", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "hushpod" })));
+    renderAt("/projects/p/chat/no-such-chat");
+    await screen.findByTestId("chat-pane");
+    await waitFor(() => expect(document.title).toBe("Chat · hushpod — Paddock"));
+  });
+
+  it("follows a rename live", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", name: "hushpod" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Old name" })],
+      }),
+    );
+    apiFns.renameProjectChat.mockResolvedValue(undefined);
+    renderAt("/projects/p/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Old name · hushpod — Paddock"));
+    fireEvent.click(screen.getByRole("button", { name: /Rename chat Old name/i }));
+    const input = await screen.findByDisplayValue("Old name");
+    fireEvent.change(input, { target: { value: "New name" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(document.title).toBe("New name · hushpod — Paddock"));
+  });
+
+  it("a new chat reads 'New chat' until it is auto-named", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "hushpod" })));
+    renderAt("/projects/p/chat");
+    await screen.findByTestId("chat-pane");
+    await waitFor(() => expect(document.title).toBe("New chat · hushpod — Paddock"));
+
+    // Establishes an id mid-stream; the list hasn't caught up yet.
+    await act(async () => {
+      chatPaneProps!.onSessionStarted!("sess-new");
+    });
+    expect(document.title).toBe("New chat · hushpod — Paddock");
+
+    // The turn completes and the server has named the chat.
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "p", name: "hushpod" }), {
+        chats: [makeChat({ sessionId: "sess-new", name: "Curated name" })],
+      }),
+    );
+    await act(async () => {
+      chatPaneProps!.onTurnComplete!();
+    });
+    await waitFor(() => expect(document.title).toBe("Curated name · hushpod — Paddock"));
+  });
+
+  it("includes an open file's basename on the Files tab", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "hushpod" })));
+    renderAt("/projects/p/files/src/feed.ts");
+    await waitFor(() => expect(document.title).toBe("feed.ts · Files · hushpod — Paddock"));
+  });
+
+  it("a project named like the brand keeps its name in the title", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "paddock", name: "paddock" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Fix the leaking tap" })],
+      }),
+    );
+    renderAt("/projects/paddock/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Fix the leaking tap · paddock — Paddock"));
+  });
+
+  it("switching projects never shows the previous project's name on the new route", async () => {
+    // `ProjectView` stays mounted across the switch and clears `project` in an
+    // effect, and A's fetch can land AFTER the switch (its `load` still sets
+    // state) — so the view can hold A's project on B's route. The title hook
+    // must not trust a project whose slug isn't the route's.
+    let resolveA: (d: ProjectDetail) => void = () => {};
+    apiFns.getProjectDetail.mockImplementation((slug: string) =>
+      slug === "a"
+        ? new Promise<ProjectDetail>((r) => {
+            resolveA = r;
+          })
+        : new Promise(() => {}),
+    );
+    render(
+      <MemoryRouter initialEntries={["/projects/a/home"]}>
+        <Link to="/projects/b/home">go to b</Link>
+        <Routes>
+          <Route path="/projects/:slug/home" element={<ProjectView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(document.title).toBe("a — Paddock"));
+    fireEvent.click(screen.getByText("go to b"));
+    await waitFor(() => expect(document.title).toBe("b — Paddock"));
+    // A's detail lands late, on B's route.
+    await act(async () => {
+      resolveA(detail(makeProject({ slug: "a", name: "Alpha" })));
+    });
+    expect(document.title).toBe("b — Paddock");
+  });
+
+  it("titles the project's Home and Settings tabs", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "hushpod" })));
+    const { unmount } = renderAt("/projects/p/home");
+    await waitFor(() => expect(document.title).toBe("hushpod — Paddock"));
+    unmount();
+    // Unmounting leaves only the brand behind — no stale project name.
+    expect(document.title).toBe("Paddock");
+    renderAt("/projects/p/settings");
+    await waitFor(() => expect(document.title).toBe("Settings · hushpod — Paddock"));
   });
 });

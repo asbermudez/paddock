@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
@@ -556,5 +556,64 @@ describe("ProjectView root (#516)", () => {
         expect(screen.queryByRole("button", { name: /Adopt \d+ native/i })).toBeNull(),
       );
     });
+  });
+});
+
+describe("ProjectView root: document title (#958)", () => {
+  type WithConfig = { __PADDOCK_CONFIG__?: unknown };
+  afterEach(() => {
+    delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+  });
+
+  // The root's name never appears (#958): the brand names the instance, and
+  // the root's #921 default "Home" would otherwise read `Home — Paddock`.
+  // Each case waits for the loaded workspace before asserting, so the title
+  // checked is the settled one, not the pre-load fallback.
+  it("root Home is just the brand once loaded", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "", name: "Home" }), { changelog: "# Changes\n- did a root thing" }),
+    );
+    renderRootAt("/");
+    expect(await screen.findByText(/did a root thing/)).toBeInTheDocument();
+    expect(document.title).toBe("Paddock");
+  });
+
+  it("a root chat is the chat's name and the brand — no workspace name", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+    );
+    renderRootAt("/chat/s1");
+    expect(await screen.findByText("Root chat")).toBeInTheDocument();
+    expect(document.title).toBe("Root chat — Paddock");
+  });
+
+  it("a new root chat", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+    );
+    renderRootAt("/chat");
+    expect(await screen.findByText("Root chat")).toBeInTheDocument();
+    expect(document.title).toBe("New chat — Paddock");
+  });
+
+  it("under a custom brand too", async () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House" } };
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "", name: "house" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Fix the leaking tap" })],
+      }),
+    );
+    renderRootAt("/chat/s1");
+    expect(await screen.findByText("Fix the leaking tap")).toBeInTheDocument();
+    expect(document.title).toBe("Fix the leaking tap — House");
+  });
+
+  it("root Files tab", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+    );
+    renderRootAt("/files");
+    expect(await screen.findByText("Root chat")).toBeInTheDocument();
+    expect(document.title).toBe("Files — Paddock");
   });
 });
