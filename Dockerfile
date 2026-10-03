@@ -239,8 +239,9 @@ RUN npm install -g @playwright/mcp \
 # Packages alone change nothing: Chromium still picks SwiftShader unless told
 # otherwise. The flags live in the config below, which Paddock passes to
 # `playwright-mcp` ONLY when /dev/dri/renderD128 opens (browser-gpu.ts). With no
-# device the flags would land on llvmpipe — more CPU than SwiftShader — so a
-# GPU-less host must keep today's defaults, and does.
+# device, the flags on THIS image leave Chromium with no WebGL at all (measured:
+# webgl and webgl2 both null), so a GPU-less host must keep today's defaults,
+# and does.
 # After the Chromium layer on purpose, so it does not invalidate that cache.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libegl1 libegl-mesa0 mesa-vulkan-drivers libvulkan1 \

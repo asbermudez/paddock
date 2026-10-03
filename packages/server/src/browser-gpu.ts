@@ -17,8 +17,10 @@
  * depends on are installed: the two ship in the same image layer.
  *
  * The flags must be GATED, never unconditional. Measured with the flags set:
- *  - packages present, no device → Chromium falls back to llvmpipe: 51 fps but
- *    6.35 cores busy, i.e. worse CPU than the SwiftShader it replaced;
+ *  - packages present, no device → on the built devbox image, NO WebGL at all:
+ *    `getContext('webgl2')` and `getContext('webgl')` both return null. (A
+ *    plainer Debian + Mesa image fell to llvmpipe instead: 51 fps on 6.35
+ *    cores, more CPU than SwiftShader. Neither is acceptable.)
  *  - device present, no packages → silently SwiftShader, i.e. nothing gained.
  * Most hosts have no GPU, so the default path has to stay exactly as it is.
  */

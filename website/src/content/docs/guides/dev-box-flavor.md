@@ -89,10 +89,9 @@ boot Paddock checks whether `/dev/dri/renderD128` actually opens; if it does, it
 launches Chromium with `--use-gl=angle --use-angle=gl-egl`. On an Intel UHD 630
 that took WebGL from 9.9 to 125 fps, with 16× less CPU.
 
-Without the device, nothing changes: Paddock passes no GPU flags, because those
-flags on a GPU-less host land on another CPU renderer (llvmpipe) that costs even
-more than SwiftShader. A `docker: true` project's browser runs in a different
-container, so it always keeps the defaults.
+Without the device, nothing changes: Paddock passes no GPU flags, because on a
+GPU-less host those flags leave Chromium with no WebGL at all. A `docker: true`
+project's browser runs in a different container, so it always keeps the defaults.
 
 Because a missing GPU degrades silently rather than failing, check the boot log,
 which names the renderer agents will get:
@@ -105,8 +104,9 @@ browser MCP: software WebGL (SwiftShader) — /dev/dri/renderD128 not openable (
 To confirm it from inside, ask an agent to open a page and read
 `WEBGL_debug_renderer_info`'s `UNMASKED_RENDERER_WEBGL`: you want your GPU's name
 (`ANGLE (Intel, Mesa Intel(R) UHD Graphics 630 …)`), not
-`SwiftShader Device`. Frame rate alone can mislead, because llvmpipe is fast
-enough to look like success.
+`SwiftShader Device`. Frame rate alone can mislead: Mesa's own software renderer,
+llvmpipe, is fast enough to look like success while costing more CPU than
+SwiftShader.
 
 Running Paddock in an LXC? The device has to reach the LXC first, then the
 container. That half is host configuration.

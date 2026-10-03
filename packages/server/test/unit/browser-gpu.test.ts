@@ -1,7 +1,7 @@
 /**
  * Hardware GL for the browser MCP (#964). Two things are pinned here: the GATE
- * (a GPU-less host must keep Playwright's defaults byte-for-byte, because the
- * flags without a device land on llvmpipe — more CPU than SwiftShader) and the
+ * (a GPU-less host must keep Playwright's defaults byte-for-byte, because on the
+ * devbox image the flags without a device leave Chromium with no WebGL at all) and the
  * image contract (the `--config` path Paddock passes is the one the devbox image
  * actually writes, carrying `gl-egl` — `--use-angle=gl` silently stays on
  * SwiftShader).
