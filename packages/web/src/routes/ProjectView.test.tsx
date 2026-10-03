@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { MemoryRouter, Routes, Route, Link } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
 import { makeProject, makeChat, makeModelsResponse } from "../test/factories";
 import { resetLastSeenForTests } from "../lib/lastSeen";
@@ -2565,6 +2565,37 @@ describe("ProjectView: document title (#958)", () => {
     );
     renderAt("/projects/paddock/chat/s1");
     await waitFor(() => expect(document.title).toBe("Fix the leaking tap · paddock — Paddock"));
+  });
+
+  it("switching projects never shows the previous project's name on the new route", async () => {
+    // `ProjectView` stays mounted across the switch and clears `project` in an
+    // effect, and A's fetch can land AFTER the switch (its `load` still sets
+    // state) — so the view can hold A's project on B's route. The title hook
+    // must not trust a project whose slug isn't the route's.
+    let resolveA: (d: ProjectDetail) => void = () => {};
+    apiFns.getProjectDetail.mockImplementation((slug: string) =>
+      slug === "a"
+        ? new Promise<ProjectDetail>((r) => {
+            resolveA = r;
+          })
+        : new Promise(() => {}),
+    );
+    render(
+      <MemoryRouter initialEntries={["/projects/a/home"]}>
+        <Link to="/projects/b/home">go to b</Link>
+        <Routes>
+          <Route path="/projects/:slug/home" element={<ProjectView />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(document.title).toBe("a — Paddock"));
+    fireEvent.click(screen.getByText("go to b"));
+    await waitFor(() => expect(document.title).toBe("b — Paddock"));
+    // A's detail lands late, on B's route.
+    await act(async () => {
+      resolveA(detail(makeProject({ slug: "a", name: "Alpha" })));
+    });
+    expect(document.title).toBe("b — Paddock");
   });
 
   it("titles the project's Home and Settings tabs", async () => {
