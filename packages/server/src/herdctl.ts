@@ -482,11 +482,16 @@ export class HerdctlService {
    * `hostPlugins` is the host's Claude Code plugins (#700), read at boot by
    * `loadHostPlugins` under `claude.instructions: host`, and handed in for
    * exactly the same reasons.
+   *
+   * `browserGpuConfig` is the browser MCP's hardware-GL `--config` (#964), from
+   * `probeBrowserGpu` in `buildApp` — a device probe, logged at boot, so it is
+   * handed in on the same terms. Undefined (the default) means software GL.
    */
   constructor(
     private readonly cfg: PaddockConfig,
     private readonly mcpSources: McpSources = EMPTY_MCP_SOURCES,
     private readonly hostPlugins: HostPluginSource = EMPTY_HOST_PLUGINS,
+    private readonly browserGpuConfig?: string,
   ) {}
 
   /**
@@ -2133,6 +2138,7 @@ export class HerdctlService {
       modelOverride,
       this.mcpSources,
       this.hostPlugins,
+      this.browserGpuConfig,
     );
   }
 
@@ -2174,7 +2180,7 @@ export class HerdctlService {
     triggerName: string,
     trigger: PaddockTrigger,
   ): Record<string, unknown> & { name: string } {
-    return buildTriggerConfig(this.cfg, project, triggerName, trigger);
+    return buildTriggerConfig(this.cfg, project, triggerName, trigger, this.browserGpuConfig);
   }
 
   private async ensureConfigFile(): Promise<void> {

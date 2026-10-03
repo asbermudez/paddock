@@ -253,15 +253,22 @@ export const DENIED_TOOLS: readonly string[] = [
  * flag the server tries to `playwright install chrome` at first use and stalls.
  * The role installs the open-source `chromium` engine, so we select it here.
  * The tool-less sweeper deliberately never receives this server.
+ *
+ * `gpuConfig` is the `--config` file that switches Chromium to hardware GL
+ * (#964), as found by `probeBrowserGpu` at boot — undefined on any host without
+ * a usable GPU, which keeps the args byte-identical to before. Callers pass it
+ * only for agents that run on THIS host: a `docker: true` project's browser runs
+ * in another container, where neither the device nor the file is known to exist,
+ * and a `--config` naming a missing file stops the MCP server starting at all.
  */
-export function browserMcpServers(enabled: boolean): Record<string, unknown> | undefined {
+export function browserMcpServers(
+  enabled: boolean,
+  gpuConfig?: string,
+): Record<string, unknown> | undefined {
   if (!enabled) return undefined;
-  return {
-    playwright: {
-      command: "playwright-mcp",
-      args: ["--headless", "--no-sandbox", "--isolated", "--browser", "chromium"],
-    },
-  };
+  const args = ["--headless", "--no-sandbox", "--isolated", "--browser", "chromium"];
+  if (gpuConfig) args.push("--config", gpuConfig);
+  return { playwright: { command: "playwright-mcp", args } };
 }
 
 /**

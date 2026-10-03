@@ -72,6 +72,45 @@ context. If you want the other devbox tools but not the browser, set
 `PADDOCK_BROWSER_MCP=0` in your run config.
 :::
 
+#### Hardware WebGL, if the host has a GPU
+
+By default the browser renders WebGL on **SwiftShader**, a CPU rasterizer. That
+is fine for clicking through a UI, but a WebGL-heavy page will spread across
+every core: one page took a 12-core host to a load of 22. If the host has an
+Intel or AMD GPU, map its render node into the container and the browser uses it
+instead:
+
+```bash
+docker run --device /dev/dri/renderD128 … ghcr.io/edspencer/paddock:devbox
+```
+
+That's the whole setup. The image carries the Mesa EGL/Vulkan libraries, and at
+boot Paddock checks whether `/dev/dri/renderD128` actually opens; if it does, it
+launches Chromium with `--use-gl=angle --use-angle=gl-egl`. On an Intel UHD 630
+that took WebGL from 9.9 to 125 fps, with 16× less CPU.
+
+Without the device, nothing changes: Paddock passes no GPU flags, because on a
+GPU-less host those flags leave Chromium with no WebGL at all. A `docker: true`
+project's browser runs in a different container, so it always keeps the defaults.
+
+Because a missing GPU degrades silently rather than failing, check the boot log,
+which names the renderer agents will get:
+
+```text
+browser MCP: hardware WebGL via /dev/dri/renderD128 (/etc/paddock/playwright-mcp-gpu.json)
+browser MCP: software WebGL (SwiftShader) — /dev/dri/renderD128 not openable (ENOENT)
+```
+
+To confirm it from inside, ask an agent to open a page and read
+`WEBGL_debug_renderer_info`'s `UNMASKED_RENDERER_WEBGL`: you want your GPU's name
+(`ANGLE (Intel, Mesa Intel(R) UHD Graphics 630 …)`), not
+`SwiftShader Device`. Frame rate alone can mislead: Mesa's own software renderer,
+llvmpipe, is fast enough to look like success while costing more CPU than
+SwiftShader.
+
+Running Paddock in an LXC? The device has to reach the LXC first, then the
+container. That half is host configuration.
+
 ### `python3`, `uv`, `jq`, `rsync` — the throwaway-script kit
 
 An agent asked to reshape some JSON or compare two dumps reaches for Python by
