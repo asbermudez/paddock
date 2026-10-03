@@ -34,13 +34,10 @@ describe("formatDocumentTitle (#958)", () => {
     expect(formatDocumentTitle({ parts: [null, "  "], brand: "House" })).toBe("House");
   });
 
-  it("drops a trailing part equal to the brand (case-insensitive): no `house — House`", () => {
-    expect(formatDocumentTitle({ parts: ["house"], brand: "House" })).toBe("House");
-    expect(formatDocumentTitle({ parts: ["Fix it", "HOUSE"], brand: "House" })).toBe("Fix it — House");
-  });
-
-  it("keeps a part that merely contains the brand", () => {
-    expect(formatDocumentTitle({ parts: ["House party"], brand: "House" })).toBe("House party — House");
+  it("keeps a part equal to the brand — root de-duplication is the caller's call", () => {
+    expect(formatDocumentTitle({ parts: ["Fix it", "paddock"], brand: "Paddock" })).toBe(
+      "Fix it · paddock — Paddock",
+    );
   });
 
   it("collapses adjacent duplicate parts", () => {

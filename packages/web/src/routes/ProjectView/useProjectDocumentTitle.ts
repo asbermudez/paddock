@@ -1,6 +1,7 @@
 import type { Chat, Project } from "../../lib/types";
 import { useProjects } from "../../lib/projects-context";
-import { useDocumentTitle, type TitlePart } from "../../lib/documentTitle";
+import { sameTitleName, useDocumentTitle, type TitlePart } from "../../lib/documentTitle";
+import { getBrand } from "../../lib/brand";
 import type { ProjectViewTab } from "./urls";
 
 /**
@@ -15,9 +16,15 @@ import type { ProjectViewTab } from "./urls";
  * — each followed by ` — <brand>` (see `formatDocumentTitle`). The root
  * workspace's name stands in for the project's, and is dropped when it equals the
  * brand, so root Home on an instance named after its directory is just the brand.
+ * A PROJECT that shares the brand's name keeps it (`X · paddock — Paddock`), or
+ * its chats would be indistinguishable from root chats.
  */
 export interface ProjectTitleInput {
   view: ProjectViewTab;
+  /** Is this the ROOT workspace? Only the root's name is dropped when it is the brand. */
+  root: boolean;
+  /** The instance brand name, for that comparison. */
+  brand: string;
   /**
    * The workspace's display name, best available: the loaded project's name,
    * else the sidebar's cached copy, else (for a project) its slug. Never
@@ -70,7 +77,9 @@ function chatPart(input: ProjectTitleInput): TitlePart {
 }
 
 export function projectTitleParts(input: ProjectTitleInput): TitlePart[] {
-  const { view, workspaceName } = input;
+  const { view, root, brand } = input;
+  const workspaceName =
+    root && sameTitleName(input.workspaceName, brand) ? "" : input.workspaceName;
   switch (view) {
     case "home":
       return [workspaceName];
@@ -87,8 +96,7 @@ export function projectTitleParts(input: ProjectTitleInput): TitlePart[] {
 
 /** What `ProjectView` hands over — raw state; the resolving happens here. */
 export interface ProjectDocumentTitleState
-  extends Omit<ProjectTitleInput, "workspaceName" | "activeChat" | "loaded"> {
-  root: boolean;
+  extends Omit<ProjectTitleInput, "workspaceName" | "activeChat" | "loaded" | "brand"> {
   slug: string;
   project: Project | null;
   chats: readonly Chat[];
@@ -107,6 +115,12 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
     chats.find((c) => c.sessionId === activeSession) ??
     (lastActiveChat?.sessionId === activeSession ? lastActiveChat : null);
   useDocumentTitle(
-    projectTitleParts({ ...state, workspaceName, activeChat, loaded: project !== null }),
+    projectTitleParts({
+      ...state,
+      workspaceName,
+      activeChat,
+      loaded: project !== null,
+      brand: getBrand().name,
+    }),
   );
 }

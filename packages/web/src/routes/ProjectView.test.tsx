@@ -2557,6 +2557,16 @@ describe("ProjectView: document title (#958)", () => {
     await waitFor(() => expect(document.title).toBe("feed.ts · Files · hushpod — Paddock"));
   });
 
+  it("a project named like the brand keeps its name in the title", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "paddock", name: "paddock" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Fix the leaking tap" })],
+      }),
+    );
+    renderAt("/projects/paddock/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Fix the leaking tap · paddock — Paddock"));
+  });
+
   it("titles the project's Home and Settings tabs", async () => {
     apiFns.getProjectDetail.mockResolvedValue(detail(makeProject({ slug: "p", name: "hushpod" })));
     const { unmount } = renderAt("/projects/p/home");
