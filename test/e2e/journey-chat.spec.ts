@@ -135,6 +135,8 @@ test("rename a project chat from the session list (rename dialog)", async ({ pag
   const slug = await createProjectViaUI(page, { name: uniq("CH Rename") });
   await sendChatTurn(page, "renamable chat message");
   await expect(page).toHaveURL(new RegExp(`/projects/${slug}/chat/[a-z0-9-]+`), { timeout: 15_000 });
+  // The tab names the chat and its project, not just the brand (#958).
+  await expect(page).toHaveTitle(/^(?!My Renamed Chat).+ · CH Rename.* — Paddock$/);
 
   // A native `dialog` event now means a REGRESSION, not the happy path (#541):
   // this used to be answered with `d.accept(...)`. Fail loudly if one appears.
@@ -153,6 +155,8 @@ test("rename a project chat from the session list (rename dialog)", async ({ pag
 
   // The list entry now shows the new name.
   await expect(page.getByRole("button").filter({ hasText: /My Renamed Chat/ }).first()).toBeVisible();
+  // …and so does the tab (#958): chat first, project next, brand last.
+  await expect(page).toHaveTitle(/^My Renamed Chat · CH Rename.* — Paddock$/);
 });
 
 // The reset path `window.prompt`'s empty-string return used to carry: clearing

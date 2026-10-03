@@ -227,11 +227,15 @@ describe("AppShell: sidebar shell", () => {
       brand: { name: "Homelab", logo: "🏠", accent: "#3366cc" },
     };
     try {
+      // The shell no longer owns the title (#958): each route sets its own via
+      // useDocumentTitle, and a parent effect runs AFTER its children's, so a
+      // shell-level `document.title = brand` would clobber the page's title.
+      document.title = "A page title — Homelab";
       renderShell();
       expect(screen.getAllByText("Homelab").length).toBeGreaterThanOrEqual(1);
       expect(screen.getAllByText("🏠").length).toBeGreaterThanOrEqual(1);
       expect(screen.queryByText("Paddock")).not.toBeInTheDocument();
-      expect(document.title).toBe("Homelab");
+      expect(document.title).toBe("A page title — Homelab");
     } finally {
       delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
     }

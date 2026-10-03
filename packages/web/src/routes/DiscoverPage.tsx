@@ -1,4 +1,5 @@
 import { DiscoverView } from "../components/DiscoverView";
+import { useDocumentTitle } from "../lib/documentTitle";
 
 /**
  * `/discover` — Discovery as an ordinary page (#745).
@@ -9,5 +10,6 @@ import { DiscoverView } from "../components/DiscoverView";
  * two copies of a table.
  */
 export function DiscoverPage() {
+  useDocumentTitle(["Discover"]);
   return <DiscoverView />;
 }

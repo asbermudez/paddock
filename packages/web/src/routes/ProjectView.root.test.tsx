@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { ProjectView } from "./ProjectView";
@@ -556,5 +556,42 @@ describe("ProjectView root (#516)", () => {
         expect(screen.queryByRole("button", { name: /Adopt \d+ native/i })).toBeNull(),
       );
     });
+  });
+});
+
+describe("ProjectView root: document title (#958)", () => {
+  type WithConfig = { __PADDOCK_CONFIG__?: unknown };
+  afterEach(() => {
+    delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+  });
+
+  it("root Home on an instance with no other name is just the brand while loading", async () => {
+    apiFns.getProjectDetail.mockReturnValue(new Promise(() => {}));
+    renderRootAt("/");
+    expect(document.title).toBe("Paddock");
+  });
+
+  it("names a root chat after the root workspace when it differs from the brand", async () => {
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(rootWorkspace(), { chats: [makeChat({ sessionId: "s1", name: "Root chat" })] }),
+    );
+    renderRootAt("/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Root chat · Instance Root — Paddock"));
+  });
+
+  it("drops the root workspace's name when it is the brand: no `house — House`", async () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House" } };
+    apiFns.getProjectDetail.mockResolvedValue(
+      detail(makeProject({ slug: "", name: "house" }), {
+        chats: [makeChat({ sessionId: "s1", name: "Fix the leaking tap" })],
+      }),
+    );
+    renderRootAt("/chat/s1");
+    await waitFor(() => expect(document.title).toBe("Fix the leaking tap — House"));
+  });
+
+  it("root Files tab", async () => {
+    renderRootAt("/files");
+    await waitFor(() => expect(document.title).toBe("Files · Instance Root — Paddock"));
   });
 });
