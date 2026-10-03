@@ -25,7 +25,7 @@
  * chips, #958 part 4, build on `CHIP_PALETTE` / `preferredChipSlot`).
  */
 import { DEFAULT_BRAND, type Brand } from "./brand";
-import { contrastRatio, oklchToRgb, resolveColor, toHex, type Rgba } from "./color";
+import { contrastRatio, oklchToRgb, resolveColor, rgbToOklch, toHex, type Rgba } from "./color";
 
 /**
  * The chip palette, as OKLCH `[L, C, H]`: twelve slots, one per ~30° of hue,
@@ -77,6 +77,26 @@ const CHIP_PALETTE_OKLCH: ReadonlyArray<readonly [number, number, number]> = [
 export const CHIP_PALETTE: readonly string[] = Object.freeze(
   CHIP_PALETTE_OKLCH.map(([L, C, H]) => toHex(oklchToRgb(L, C, H))),
 );
+
+/**
+ * Each palette slot in OKLab, measured from the RENDERED `#rrggbb` (so any
+ * gamut clipping is accounted for), for distance comparisons between slots.
+ */
+const CHIP_PALETTE_OKLAB: ReadonlyArray<{ L: number; a: number; b: number }> = CHIP_PALETTE.map((hex) => {
+  const { L, C, H } = rgbToOklch(resolveColor(hex, {}));
+  const h = (H * Math.PI) / 180;
+  return { L, a: C * Math.cos(h), b: C * Math.sin(h) };
+});
+
+/**
+ * Perceptual distance between two palette slots: Euclidean ΔE in OKLab
+ * (ΔEOK, ~0.02 is a just-noticeable difference). Symmetric; 0 for i === j.
+ */
+export function chipSlotDeltaE(i: number, j: number): number {
+  const p = CHIP_PALETTE_OKLAB[i];
+  const q = CHIP_PALETTE_OKLAB[j];
+  return Math.hypot(p.L - q.L, p.a - q.a, p.b - q.b);
+}
 
 /**
  * 32-bit FNV-1a over the UTF-16 code units of `s`. Stable across browsers and

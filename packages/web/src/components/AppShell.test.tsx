@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
-import { deriveChipColor } from "../lib/brandChip";
+import { deriveChipColor, preferredChipSlot } from "../lib/brandChip";
 import { makeProject } from "../test/factories";
 import {
   forgetChats,
@@ -302,6 +302,39 @@ describe("AppShell: area grouping + subheaders", () => {
     // Third tag is collapsed into a "+1".
     expect(within(link).getByText("+1")).toBeInTheDocument();
     expect(within(link).queryByText("hvac")).not.toBeInTheDocument();
+  });
+
+  it("gives each row a decorative initial chip without changing its accessible name (#958)", () => {
+    mockProjects = [makeProject({ slug: "beacon", name: "Beacon" })];
+    renderShell();
+    const link = screen.getByRole("link", { name: /^Beacon/ });
+    const chip = within(link).getByTestId("project-chip");
+    expect(chip).toHaveTextContent("B");
+    expect(chip).toHaveAttribute("aria-hidden", "true");
+    // The chip's "B" must not leak into the name ("BBeacon").
+    expect(screen.queryByRole("link", { name: /^BBeacon/ })).not.toBeInTheDocument();
+  });
+
+  it("gives two projects whose slugs hash to the same colour DIFFERENT chips (#958)", () => {
+    // Find two slugs with the same preferred slot.
+    const bySlot = new Map<number, string>();
+    let pair: [string, string] | null = null;
+    for (let i = 0; !pair; i++) {
+      const slug = `proj${i}`;
+      const slot = preferredChipSlot(slug);
+      const prev = bySlot.get(slot);
+      if (prev) pair = [prev, slug];
+      else bySlot.set(slot, slug);
+    }
+    mockProjects = [
+      makeProject({ slug: pair[0], name: "Alpha", started: "2026-01-01" }),
+      makeProject({ slug: pair[1], name: "Bravo", started: "2026-02-01" }),
+    ];
+    renderShell();
+    const bg = (name: RegExp) =>
+      within(screen.getByRole("link", { name })).getByTestId("project-chip").style.backgroundColor;
+    expect(bg(/^Alpha/)).not.toBe("");
+    expect(bg(/^Alpha/)).not.toBe(bg(/^Bravo/));
   });
 });
 
