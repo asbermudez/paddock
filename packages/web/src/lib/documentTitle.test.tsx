@@ -77,6 +77,24 @@ describe("cleanTitlePart", () => {
     expect(out).toBe(`${"🐎".repeat(TITLE_PART_MAX - 1)}…`);
   });
 
+  // Each cluster below is several code points; put one straddling the cut
+  // (characters 59–60) and it must survive whole, not as a fragment.
+  const pad = "a".repeat(TITLE_PART_MAX - 2);
+  it.each([
+    ["ZWJ family", "👨‍👩‍👧"],
+    ["flag", "🇬🇧"],
+    ["skin-tone emoji", "👍🏽"],
+    ["combining accent", "e\u0301"],
+  ])("cuts by grapheme: a %s at the cut point stays whole", (_label, cluster) => {
+    const out = cleanTitlePart(`${pad}${cluster}${cluster}tail`);
+    expect(out).toBe(`${pad}${cluster}…`);
+  });
+
+  it("counts a cluster as one character toward the limit", () => {
+    const fam = "👨‍👩‍👧".repeat(TITLE_PART_MAX);
+    expect(cleanTitlePart(fam)).toBe(fam);
+  });
+
   it("doesn't leave a space before the ellipsis", () => {
     const out = cleanTitlePart(`${"a".repeat(TITLE_PART_MAX - 2)} bcdef`);
     expect(out).toBe(`${"a".repeat(TITLE_PART_MAX - 2)}…`);
