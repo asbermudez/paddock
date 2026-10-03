@@ -47,7 +47,16 @@ async function killChat(page: Page, slug: string, sessionId: string): Promise<vo
   await page.request.delete(`/api/projects/${slug}/chats/${sessionId}`);
 }
 
-/** A chat with a landed reply, then flagged unread: backlog the tab must NOT count. */
+/**
+ * A chat with a landed reply, then flagged unread: backlog the tab must NOT count.
+ *
+ * The flag must be set AFTER the page has stopped looking at the chat. While the
+ * chat is open, the SPA marks it seen on open (an explicit `/seen`, which by
+ * design clears a manual unread flag, #458) — and that POST can land after ours
+ * on a loaded runner, silently un-flagging the backlog (CI run 37148780120). So:
+ * leave the chat first, let its in-flight marks drain, THEN flag it, and confirm
+ * the server holds the flag before going on.
+ */
 async function seedUnreadBacklog(page: Page, slug: string, marker: string): Promise<string> {
   await page.goto(`/projects/${slug}/chat`);
   await page.getByPlaceholder(/Message Claude/i).fill(marker);
@@ -55,8 +64,29 @@ async function seedUnreadBacklog(page: Page, slug: string, marker: string): Prom
   await expect(page.getByText(/Acknowledged:/).first()).toBeVisible({ timeout: 30_000 });
   await page.waitForURL(/\/chat\/[a-z0-9-]+$/, { timeout: 30_000 });
   const sessionId = new URL(page.url()).pathname.split("/").pop()!;
+  // Off the chat entirely: no page is left to mark it seen.
+  await page.goto("about:blank");
+  const chat = async () => {
+    const res = await page.request.get(`/api/projects/${slug}/chats`);
+    return (await res.json()).chats.find((c: { sessionId: string }) => c.sessionId === sessionId) as
+      | { unread?: boolean; lastSeen?: number; lastTurnCompletedAt?: string }
+      | undefined;
+  };
+  // Let the page's own seen marks land first (they were sent before we left).
+  // Bounded and non-fatal: a mark the navigation aborted never arrives at all.
+  await expect
+    .poll(async () => {
+      const c = await chat();
+      return !!c?.lastTurnCompletedAt && (c.lastSeen ?? 0) >= Date.parse(c.lastTurnCompletedAt);
+    }, { timeout: 5_000 })
+    .toBe(true)
+    .catch(() => {});
   const res = await page.request.post(`/api/projects/${slug}/chats/${sessionId}/unread`, { data: { unread: true } });
   expect(res.ok()).toBe(true);
+  // The flag must HOLD, not just appear: read it twice, apart.
+  await expect.poll(async () => (await chat())?.unread === true).toBe(true);
+  await page.waitForTimeout(500);
+  expect((await chat())?.unread).toBe(true);
   return sessionId;
 }
 
