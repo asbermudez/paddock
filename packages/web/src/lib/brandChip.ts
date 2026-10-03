@@ -3,12 +3,15 @@
  *
  * The chip — `brand.logo` on a rounded square — is what tells one Paddock
  * instance's browser tabs from another's: the favicon IS the chip, and the
- * sidebar shows the same chip next to the wordmark. Its colour is:
+ * sidebar shows a chip next to the wordmark. Its colour is:
  *
- *  1. `brand.accent`, if the operator set one;
+ *  1. `brand.accent`, if the operator set one. The favicon uses that hex
+ *     exactly; the sidebar chip keeps reaching it through the theme-solved
+ *     `--accent`, so the two share a hue but may differ in lightness.
  *  2. otherwise, when the instance has been renamed, a colour DERIVED from
- *     `brand.name` — a stable hash picks the hue — so two renamed instances
- *     differ with zero config;
+ *     `brand.name` — a stable hash picks a slot in `CHIP_PALETTE` — so two
+ *     renamed instances differ with zero config. Here favicon and sidebar chip
+ *     are the same colour exactly.
  *  3. otherwise (still called "Paddock", default accent) the default
  *     terracotta, i.e. nothing changes.
  *
@@ -18,22 +21,62 @@
  * unset — the same rule the server's own `accentRootStyle` uses.
  *
  * Pure and DOM-free on purpose, so it is unit-testable under jsdom and reusable
- * by anything else that wants a name-derived chip (the sidebar's per-project
- * chips, #958 part 4, call `deriveChipColor` directly).
+ * by anything else that wants a key-derived chip (the sidebar's per-project
+ * chips, #958 part 4, build on `CHIP_PALETTE` / `preferredChipSlot`).
  */
 import { DEFAULT_BRAND, type Brand } from "./brand";
-import { contrastRatio, inSrgbGamut, oklchToRgb, resolveColor, toHex, type Rgba } from "./color";
+import { contrastRatio, oklchToRgb, resolveColor, toHex, type Rgba } from "./color";
 
 /**
- * Lightness and chroma of a derived chip. Fixed, so only the hue varies with
- * the name: mid lightness reads as a solid tile on both Chrome's light (~0.9 L)
- * and dark (~0.25 L) tab strips. 0.53 is chosen so WHITE text clears 4.5:1 on
- * every hue (worst case ~4.95:1, measured over all 360) — the sidebar chip
- * renders a letter logo at text-sm, which is body-size text. At 0.56 the worst
- * hues fell to ~4.36:1.
+ * The chip palette, as OKLCH `[L, C, H]`: twelve slots, one per ~30° of hue,
+ * hand-tuned rather than computed.
+ *
+ * Why a palette and not a continuous hue: hashing to any of 360 hues clusters
+ * — on one real instance four of nine project names landed in a single 45°
+ * olive band, and two hues 20° apart are indistinguishable at 16px. Twelve
+ * fixed slots trade a higher chance of an exact repeat (which a caller with the
+ * whole list can avoid; see `preferredChipSlot`) for a guarantee that any two
+ * DIFFERENT slots read as different colours.
+ *
+ * How the slots were tuned:
+ *  - Every slot clears 4.5:1 against white text (the sidebar chip draws a
+ *    letter logo at body size); the lightest sit near 4.6:1.
+ *  - Lightness alternates (~0.44–0.48 vs ~0.55–0.58) between neighbours,
+ *    because sRGB caps chroma hard in the teal/cyan and yellow/olive bands at
+ *    this lightness, and hue alone cannot separate them there. The darker
+ *    slots (crimson, rust, olive, deep teal, indigo, plum) are what push the
+ *    closest pair apart.
+ *  - Yellow is not offered as such: at a lightness that carries white text it
+ *    is olive or ochre, so the warm half is crimson / rust / ochre / olive.
+ *  - Chroma is already inside the sRGB gamut for each slot, so nothing clips.
+ *  - The closest pair (rust / ochre) is ~0.091 apart in OKLab — ~4.5x the
+ *    ~0.02 just-noticeable difference — and the nearest slot to the default
+ *    terracotta is ~0.095 away, so a renamed instance never reads as an
+ *    unbranded one.
+ *
+ * Order is part of the contract: `preferredChipSlot` indexes into it, so
+ * reordering or inserting a slot recolours existing instances. Append-only
+ * changes would too (the modulus changes); treat the list as frozen.
  */
-export const DERIVED_CHIP_L = 0.53;
-export const DERIVED_CHIP_C = 0.14;
+const CHIP_PALETTE_OKLCH: ReadonlyArray<readonly [number, number, number]> = [
+  [0.47, 0.17, 25], //   crimson
+  [0.5, 0.122, 55], //   rust
+  [0.555, 0.112, 90], // ochre
+  [0.48, 0.12, 125], //  olive
+  [0.545, 0.15, 150], // green
+  [0.44, 0.077, 185], // deep teal
+  [0.555, 0.098, 215], // cyan
+  [0.545, 0.15, 252], // blue
+  [0.44, 0.17, 282], //  indigo
+  [0.58, 0.16, 308], //  violet
+  [0.48, 0.17, 338], //  plum
+  [0.58, 0.16, 5], //    rose
+];
+
+/** The chip palette as `#rrggbb`, in slot order. */
+export const CHIP_PALETTE: readonly string[] = Object.freeze(
+  CHIP_PALETTE_OKLCH.map(([L, C, H]) => toHex(oklchToRgb(L, C, H))),
+);
 
 /**
  * 32-bit FNV-1a over the UTF-16 code units of `s`. Stable across browsers and
@@ -49,21 +92,19 @@ export function hashString(s: string): number {
   return h >>> 0;
 }
 
-/** The hue (0–359) a name hashes to. Trimmed, case-sensitive. */
-export function nameHue(name: string): number {
-  return hashString(name.trim()) % 360;
+/**
+ * The palette slot a key hashes to (trimmed, case-sensitive). "Preferred"
+ * because a caller colouring a whole list (project chips) may move a key off
+ * its slot to avoid a collision; a single key — this instance's name — just
+ * takes it.
+ */
+export function preferredChipSlot(key: string): number {
+  return hashString(key.trim()) % CHIP_PALETTE.length;
 }
 
-/**
- * A chip colour derived from a name, as `#rrggbb`. Fixed OKLCH lightness and
- * chroma, hue from the hash; chroma is pulled in only as far as needed to stay
- * inside sRGB, so no hue lands on a clipped, off-hue tile.
- */
-export function deriveChipColor(name: string): string {
-  const H = nameHue(name);
-  let C = DERIVED_CHIP_C;
-  while (C > 0 && !inSrgbGamut(DERIVED_CHIP_L, C, H)) C -= 0.005;
-  return toHex(oklchToRgb(DERIVED_CHIP_L, Math.max(C, 0), H));
+/** The chip colour for a key, as `#rrggbb`: its preferred palette slot. */
+export function deriveChipColor(key: string): string {
+  return CHIP_PALETTE[preferredChipSlot(key)];
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -106,8 +147,10 @@ export function brandChipColor(brand: Brand): string {
  * The colour the SIDEBAR chip should override its accent background with, or
  * null to leave it on the theme's `--accent` (today's look).
  *
- * Only the derived case overrides. An explicit accent already reaches the
- * sidebar chip through the `--accent` seam (theme-solved to the same hue), and
+ * Only the derived case overrides — and so only the derived case makes the
+ * sidebar chip and the favicon exactly the same colour. An explicit accent
+ * reaches the sidebar chip through the `--accent` seam instead (theme-solved:
+ * same hue, possibly a different lightness from the favicon's raw hex), and
  * the default case must not change at all. The global `--accent` — buttons,
  * links — is never touched: the derived colour is the instance's identity, not
  * its UI accent.

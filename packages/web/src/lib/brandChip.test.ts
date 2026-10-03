@@ -1,67 +1,97 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_BRAND } from "./brand";
 import {
-  DERIVED_CHIP_L,
+  CHIP_PALETTE,
   brandChipColor,
   chipForeground,
   deriveChipColor,
   hashString,
   isDefaultAccent,
   isDefaultBrand,
-  nameHue,
+  preferredChipSlot,
   sidebarChipOverride,
 } from "./brandChip";
 import { contrastRatio, resolveColor, rgbToOklch } from "./color";
 
 const HEX = /^#[0-9a-f]{6}$/;
 
-describe("hashString / nameHue", () => {
+/** OKLab Euclidean distance between two hexes. */
+function deltaE(x: string, y: string): number {
+  const lab = (h: string) => {
+    const { L, C, H } = rgbToOklch(resolveColor(h, {}));
+    const r = (H * Math.PI) / 180;
+    return [L, C * Math.cos(r), C * Math.sin(r)];
+  };
+  const [p, q] = [lab(x), lab(y)];
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+}
+
+describe("hashString / preferredChipSlot", () => {
   it("is deterministic and pinned (an instance's colour must never drift)", () => {
     // FNV-1a reference values: "" is the offset basis, "a" is the published vector.
     expect(hashString("")).toBe(0x811c9dc5);
     expect(hashString("a")).toBe(0xe40c292c);
-    expect(nameHue("House")).toBe(nameHue("House"));
-    expect(nameHue("  House ")).toBe(nameHue("House"));
+    expect(preferredChipSlot("House")).toBe(hashString("House") % 12);
+    expect(preferredChipSlot("  House ")).toBe(preferredChipSlot("House"));
   });
 
-  it("spreads ordinary instance names across the wheel", () => {
-    const hues = ["House", "Homelab", "Projects", "Work", "Lab", "Media"].map(nameHue);
-    expect(new Set(hues).size).toBe(hues.length);
-    for (const h of hues) expect(h).toBeGreaterThanOrEqual(0), expect(h).toBeLessThan(360);
+  it("always lands inside the palette", () => {
+    for (let i = 0; i < 500; i++) {
+      const slot = preferredChipSlot(`k${i}`);
+      expect(Number.isInteger(slot)).toBe(true);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      expect(slot).toBeLessThan(CHIP_PALETTE.length);
+    }
+  });
+
+  it("reaches every slot (no dead colours)", () => {
+    const seen = new Set(Array.from({ length: 500 }, (_, i) => preferredChipSlot(`k${i}`)));
+    expect(seen.size).toBe(CHIP_PALETTE.length);
+  });
+});
+
+describe("CHIP_PALETTE", () => {
+  it("is twelve frozen #rrggbb colours, pinned (reordering recolours every instance)", () => {
+    expect(Object.isFrozen(CHIP_PALETTE)).toBe(true);
+    expect(CHIP_PALETTE).toEqual([
+      "#a51e24", "#964c04", "#8c6f05", "#4e6801", "#00873c", "#026058",
+      "#008197", "#1a71c4", "#493cab", "#955bc2", "#962a7e", "#c4486d",
+    ]);
+    for (const hex of CHIP_PALETTE) expect(hex).toMatch(HEX);
+  });
+
+  it("every slot carries white body text at >= 4.5:1", () => {
+    const white = { r: 1, g: 1, b: 1, a: 1 };
+    for (const hex of CHIP_PALETTE) {
+      expect(contrastRatio(white, resolveColor(hex, {})), hex).toBeGreaterThanOrEqual(4.5);
+      expect(chipForeground(hex)).toBe("white");
+    }
+  });
+
+  it("every pair of slots is clearly distinct: OKLab ΔE >= 0.08", () => {
+    // ~0.02 is a just-noticeable difference in OKLab for large flat patches;
+    // a 16px tab icon is neither large nor viewed side by side, so ask for 4x
+    // that. The tuned palette's closest pair (rust/ochre) sits at ~0.091.
+    let min = Infinity;
+    for (let i = 0; i < CHIP_PALETTE.length; i++)
+      for (let j = i + 1; j < CHIP_PALETTE.length; j++) min = Math.min(min, deltaE(CHIP_PALETTE[i], CHIP_PALETTE[j]));
+    expect(min).toBeGreaterThanOrEqual(0.08);
+  });
+
+  it("no slot can be mistaken for an unbranded instance's terracotta", () => {
+    for (const hex of CHIP_PALETTE) expect(deltaE(hex, DEFAULT_BRAND.accent), hex).toBeGreaterThanOrEqual(0.08);
   });
 });
 
 describe("deriveChipColor", () => {
-  it("returns an in-gamut hex at the fixed lightness, with the name's hue", () => {
-    for (const name of ["House", "Homelab", "Projects", "Work", "Lab", "Media", "x", "🦄"]) {
-      const hex = deriveChipColor(name);
-      expect(hex).toMatch(HEX);
-      const { L, H } = rgbToOklch(resolveColor(hex, {}));
-      expect(L).toBeCloseTo(DERIVED_CHIP_L, 1);
-      const dh = Math.abs(((H - nameHue(name) + 540) % 360) - 180);
-      expect(dh).toBeLessThan(4);
+  it("is the key's preferred palette slot", () => {
+    for (const name of ["House", "Homelab", "Projects", "x", "🦄"]) {
+      expect(deriveChipColor(name)).toBe(CHIP_PALETTE[preferredChipSlot(name)]);
     }
   });
 
-  it("differs between names and is stable for one", () => {
+  it("is stable for one name", () => {
     expect(deriveChipColor("House")).toBe(deriveChipColor("House"));
-    expect(deriveChipColor("House")).not.toBe(deriveChipColor("Homelab"));
-  });
-
-  it("keeps white text at >= 4.5:1 (body text) for every name and every hue", () => {
-    const white = { r: 1, g: 1, b: 1, a: 1 };
-    for (let i = 0; i < 200; i++) {
-      const hex = deriveChipColor(`instance-${i}`);
-      expect(contrastRatio(white, resolveColor(hex, {}))).toBeGreaterThanOrEqual(4.5);
-      expect(chipForeground(hex)).toBe("white");
-    }
-    // The hash only ever yields integer hues, so all 360 is exhaustive.
-    const byHue = new Map<number, string>();
-    for (let k = 0; byHue.size < 360 && k < 50_000; k++) if (!byHue.has(nameHue(`n${k}`))) byHue.set(nameHue(`n${k}`), `n${k}`);
-    expect(byHue.size).toBe(360);
-    for (const name of byHue.values()) {
-      expect(contrastRatio(white, resolveColor(deriveChipColor(name), {}))).toBeGreaterThanOrEqual(4.5);
-    }
   });
 });
 

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getBrand } from "./brand";
+import { graphemes } from "./graphemes";
 
 /**
  * Per-route document titles (#958).
@@ -32,14 +33,15 @@ export type TitlePart = string | null | undefined | false;
 
 /**
  * Normalise one part: collapse whitespace (a chat name can carry newlines) and
- * cut to {@link TITLE_PART_MAX} characters including the `…`. Counted in code
- * points so an emoji is never split into a lone surrogate. Returns "" for an
+ * cut to {@link TITLE_PART_MAX} characters including the `…`. Counted in
+ * grapheme clusters (see `graphemes`), so a ZWJ family, a flag, a skin tone or
+ * a combining accent is never cut in half. Returns "" for an
  * empty or whitespace-only part.
  */
 export function cleanTitlePart(part: TitlePart, max = TITLE_PART_MAX): string {
   if (!part) return "";
   const text = part.replace(/\s+/g, " ").trim();
-  const chars = Array.from(text);
+  const chars = graphemes(text);
   if (chars.length <= max) return text;
   return `${chars.slice(0, max - 1).join("").trimEnd()}…`;
 }
