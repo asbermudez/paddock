@@ -1,5 +1,11 @@
 # @paddock/server
 
+## 0.78.0
+
+### Minor Changes
+
+- [#965](https://github.com/edspencer/paddock/pull/965) [`cd29f85`](https://github.com/edspencer/paddock/commit/cd29f85538628d2ece7d32de5c055f2d79e6b067) Thanks [@edspencer](https://github.com/edspencer)! - The devbox image can now give the browser MCP's Chromium a real GPU for WebGL (#964). Map the host's render node into the container (`--device /dev/dri/renderD128`) and Paddock passes Chromium `--use-gl=angle --use-angle=gl-egl`, with the Mesa EGL/Vulkan packages the image now carries. Measured on an Intel UHD 630, WebGL ran 12.7× faster on 16× less CPU than the SwiftShader software renderer it replaces. Hosts without a GPU are unchanged: the flags are only passed when the device actually opens, and the boot log says which renderer agents got. `docker: true` projects keep the defaults.
+
 ## 0.77.0
 
 ### Minor Changes
