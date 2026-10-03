@@ -743,3 +743,40 @@ describe("AppShell: the badge forgets chats that are gone (#732, #734)", () => {
     );
   });
 });
+
+describe("AppShell: brand chip colour (#958)", () => {
+  type WithConfig = { __PADDOCK_CONFIG__?: unknown };
+  const chips = () => screen.getAllByTestId("brand-chip");
+
+  it("an all-defaults instance keeps the accent chip and the shipped favicon", () => {
+    const before = document.head.innerHTML;
+    renderShell();
+    for (const chip of chips()) expect(chip.getAttribute("style")).toBeNull();
+    expect(document.head.innerHTML).toBe(before);
+  });
+
+  it("a renamed instance on the default accent gets the name-derived chip colour", () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House" } };
+    try {
+      renderShell();
+      for (const chip of chips()) {
+        expect(chip.style.backgroundColor).not.toBe("");
+        expect(chip.style.color).toBe("white");
+      }
+      // The global accent seam is untouched.
+      expect(document.documentElement.style.getPropertyValue("--accent")).toBe("");
+    } finally {
+      delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+    }
+  });
+
+  it("an explicit accent leaves the chip on --accent", () => {
+    (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House", accent: "#3366cc" } };
+    try {
+      renderShell();
+      for (const chip of chips()) expect(chip.getAttribute("style")).toBeNull();
+    } finally {
+      delete (globalThis as WithConfig).__PADDOCK_CONFIG__;
+    }
+  });
+});

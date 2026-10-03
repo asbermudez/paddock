@@ -4,6 +4,8 @@ import { useProjects } from "../lib/projects-context";
 import { useTheme } from "../lib/theme";
 import type { Project } from "../lib/types";
 import { getBrand, getOpenApi, logoIsImage } from "../lib/brand";
+import { chipForeground, sidebarChipOverride } from "../lib/brandChip";
+import { useFavicon } from "../lib/useFavicon";
 import { areaLabel, orderAreaSlugs } from "../lib/areas";
 import { chatClient } from "../lib/ws";
 import {
@@ -180,6 +182,8 @@ export function AppShell() {
   const location = useLocation();
   const brand = getBrand();
   const openapi = getOpenApi();
+  // The tab icon is the brand chip, so instances can be told apart (#958).
+  useFavicon(brand);
   // Desktop-only draggable width for the side-nav (#374), persisted per-browser.
   const sidenav = usePaneWidth(SIDENAV_PANE);
 
@@ -527,9 +531,14 @@ export function AppShell() {
  * chip background comes from the runtime `--accent` CSS variable via `bg-accent-solid`.
  */
 function BrandLogo({ brand, className = "" }: { brand: ReturnType<typeof getBrand>; className?: string }) {
+  // A renamed instance on the default accent gets the same name-derived colour
+  // as its favicon (#958), so tab and chip match; `--accent` itself is untouched.
+  const override = sidebarChipOverride(brand);
   return (
     <span
       className={`flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-accent-solid text-accent-fg shadow-sm ${className}`}
+      style={override ? { backgroundColor: override, color: chipForeground(override) } : undefined}
+      data-testid="brand-chip"
     >
       {logoIsImage(brand.logo) ? (
         <img src={brand.logo} alt="" className="h-full w-full object-cover" />
