@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHIP_PALETTE, preferredChipSlot } from "./brandChip";
+import { CHIP_PALETTE, chipSlotDeltaE, preferredChipSlot } from "./brandChip";
 import { assignChipColors, assignChipSlots, type ChipSlotInput } from "./projectChips";
 
 const N = CHIP_PALETTE.length;
@@ -19,6 +19,18 @@ function collidingSlugs(count: number, prefix = "p"): string[] {
 
 const values = (m: Map<string, number>) => [...m.values()];
 
+const ring = (i: number, j: number) => Math.min(Math.abs(i - j), N - Math.abs(i - j));
+
+/** min ΔE from `slot` to every slot in `taken`. */
+const minDE = (slot: number, taken: number[]) => Math.min(...taken.map((t) => chipSlotDeltaE(slot, t)));
+
+/** Assert `slot` is (one of) the most distinct free slot(s) given `taken`. */
+function expectMostDistinct(slot: number, taken: number[]) {
+  expect(taken).not.toContain(slot);
+  const best = Math.max(...[...Array(N).keys()].filter((s) => !taken.includes(s)).map((s) => minDE(s, taken)));
+  expect(minDE(slot, taken)).toBe(best);
+}
+
 describe("assignChipSlots", () => {
   it("gives every project its preferred slot when nothing collides", () => {
     const seen = new Set<number>();
@@ -33,15 +45,32 @@ describe("assignChipSlots", () => {
     for (const p of ps) expect(m.get(p.slug)).toBe(preferredChipSlot(p.slug));
   });
 
-  it("resolves a collision: the older project keeps its slot, the newer takes the next free one", () => {
-    const [a, b] = collidingSlugs(2);
-    const pref = preferredChipSlot(a);
-    const m = assignChipSlots([
-      { slug: b, started: "2026-02-01" },
-      { slug: a, started: "2026-01-01" },
-    ]);
-    expect(m.get(a)).toBe(pref);
-    expect(m.get(b)).toBe((pref + 1) % N);
+  it("resolves a collision: the older keeps its slot, the newer takes the MOST DISTINCT free one — not the neighbour", () => {
+    // Every slot as the contested one, so no palette position is untested.
+    for (let slot = 0; slot < N; slot++) {
+      const a = collidingSlugsForSlot(slot);
+      const b = collidingSlugsForSlot(slot, a);
+      const m = assignChipSlots([
+        { slug: b, started: "2026-02-01" },
+        { slug: a, started: "2026-01-01" },
+      ]);
+      expect(m.get(a)).toBe(slot);
+      expectMostDistinct(m.get(b)!, [slot]);
+      expect(ring(m.get(b)!, slot)).toBeGreaterThan(1); // never an adjacent hue
+      for (const nb of [(slot + 1) % N, (slot + N - 1) % N]) {
+        expect(chipSlotDeltaE(m.get(b)!, slot)).toBeGreaterThan(chipSlotDeltaE(nb, slot));
+      }
+    }
+  });
+
+  it("with several slots taken, a bumped project maximises its minimum ΔE to all of them", () => {
+    const olds = ["managers", "edspencer-net", "coderabbit", "herdctl"];
+    const ps: ChipSlotInput[] = olds.map((slug, i) => ({ slug, started: `2025-0${i + 1}-01` }));
+    const base = assignChipSlots(ps);
+    const contested = base.get("herdctl")!;
+    const newcomer = collidingSlugsForSlot(contested);
+    const m = assignChipSlots([...ps, { slug: newcomer, started: "2026-01-01" }]);
+    expectMostDistinct(m.get(newcomer)!, olds.map((s) => base.get(s)!));
   });
 
   it("orders by creation date before slug", () => {
@@ -61,18 +90,7 @@ describe("assignChipSlots", () => {
       { slug: x, started: "2026-01-01" },
     ]);
     expect(m.get(x)).toBe(preferredChipSlot(x));
-    expect(m.get(y)).toBe((preferredChipSlot(x) + 1) % N);
-  });
-
-  it("wraps past the end of the palette", () => {
-    const old = collidingSlugsForSlot(N - 1);
-    const newer = collidingSlugsForSlot(N - 1, old);
-    const m = assignChipSlots([
-      { slug: old, started: "2020-01-01" },
-      { slug: newer, started: "2026-01-01" },
-    ]);
-    expect(m.get(old)).toBe(N - 1);
-    expect(m.get(newer)).toBe(0);
+    expectMostDistinct(m.get(y)!, [preferredChipSlot(x)]);
   });
 
   it("is stable when a NEWER project is added: no existing project changes colour", () => {
@@ -114,7 +132,7 @@ describe("assignChipSlots", () => {
       { slug: c, started: "2026-03-01" },
     ];
     const before = assignChipSlots(ps);
-    expect(before.get(b)).toBe((preferredChipSlot(a) + 1) % N);
+    expect(before.get(b)).not.toBe(preferredChipSlot(b)); // bumped
     const after = assignChipSlots(ps.filter((p) => p.slug !== a));
     expect(after.get(b)).toBe(preferredChipSlot(b)); // moved into the freed slot
     expect(after.has(a)).toBe(false);

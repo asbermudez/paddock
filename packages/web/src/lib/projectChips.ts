@@ -10,8 +10,13 @@
  *    once and immutable server-side, `YYYY-MM-DD`), ties broken by slug, which
  *    is also immutable. Day granularity means projects created the same day
  *    order by slug among themselves;
- *  - each takes its `preferredChipSlot(slug)` if free, else the next free slot
- *    after it (wrapping);
+ *  - each takes its `preferredChipSlot(slug)` if free; otherwise the free slot
+ *    that is MOST DISTINCT from every slot already taken — the one maximising
+ *    the minimum OKLab ΔE to them (`chipSlotDeltaE`). Ties go to the slot
+ *    nearest the preferred one (circular index distance), then the lowest
+ *    index. "Next free slot" was the first cut, but the palette runs round the
+ *    hue wheel, so the neighbour of a taken slot is its nearest-looking colour
+ *    — a bumped paddock landed on ochre right beside herdctl's rust;
  *  - once all slots are taken, a project simply takes its preferred slot, and
  *    colours repeat.
  *
@@ -25,7 +30,7 @@
  * Pure and deterministic: the same set of projects gives the same map in any
  * input order.
  */
-import { CHIP_PALETTE, preferredChipSlot } from "./brandChip";
+import { CHIP_PALETTE, chipSlotDeltaE, preferredChipSlot } from "./brandChip";
 
 export interface ChipSlotInput {
   slug: string;
@@ -38,10 +43,34 @@ function startedKey(started: string | undefined): string {
   return started && /^\d{4}-\d{2}-\d{2}/.test(started) ? started : "~";
 }
 
-export function assignChipSlots(
-  projects: readonly ChipSlotInput[],
-  size: number = CHIP_PALETTE.length,
-): Map<string, number> {
+/** Circular distance between two slot indices on a palette of `n`. */
+function ringDistance(i: number, j: number, n: number): number {
+  const d = Math.abs(i - j) % n;
+  return Math.min(d, n - d);
+}
+
+/** The free slot most distinct from `taken` (see the top of the file). */
+function mostDistinctFreeSlot(taken: ReadonlySet<number>, preferred: number, n: number): number {
+  let best = -1;
+  let bestScore = -Infinity;
+  let bestRing = Infinity;
+  for (let slot = 0; slot < n; slot++) {
+    if (taken.has(slot)) continue;
+    let score = Infinity;
+    for (const t of taken) score = Math.min(score, chipSlotDeltaE(slot, t));
+    const ring = ringDistance(slot, preferred, n);
+    // Ascending index order makes "lowest index" the implicit last tiebreak.
+    if (score > bestScore || (score === bestScore && ring < bestRing)) {
+      best = slot;
+      bestScore = score;
+      bestRing = ring;
+    }
+  }
+  return best;
+}
+
+export function assignChipSlots(projects: readonly ChipSlotInput[]): Map<string, number> {
+  const n = CHIP_PALETTE.length;
   const ordered = [...projects].sort((a, b) => {
     const sa = startedKey(a.started);
     const sb = startedKey(b.started);
@@ -52,11 +81,9 @@ export function assignChipSlots(
   const out = new Map<string, number>();
   for (const { slug } of ordered) {
     if (out.has(slug)) continue;
-    const preferred = preferredChipSlot(slug) % size;
-    let slot = preferred;
-    if (taken.size < size) {
-      while (taken.has(slot)) slot = (slot + 1) % size;
-    }
+    const preferred = preferredChipSlot(slug);
+    const slot =
+      !taken.has(preferred) || taken.size >= n ? preferred : mostDistinctFreeSlot(taken, preferred, n);
     taken.add(slot);
     out.set(slug, slot);
   }
