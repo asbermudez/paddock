@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route } from "react-router-dom";
 import { AppShell } from "./AppShell";
+import { deriveChipColor } from "../lib/brandChip";
 import { makeProject } from "../test/factories";
 import {
   forgetChats,
@@ -763,8 +764,11 @@ describe("AppShell: brand chip colour (#958)", () => {
     (globalThis as WithConfig).__PADDOCK_CONFIG__ = { brand: { name: "House" } };
     try {
       renderShell();
+      // Same colour the favicon is drawn in (jsdom normalises the hex to rgb()).
+      const hex = deriveChipColor("House");
+      const rgb = `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ")})`;
       for (const chip of chips()) {
-        expect(chip.style.backgroundColor).not.toBe("");
+        expect(chip.style.backgroundColor).toBe(rgb);
         expect(chip.style.color).toBe("white");
       }
       // The global accent seam is untouched.
