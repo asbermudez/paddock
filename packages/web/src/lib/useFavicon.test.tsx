@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
-import { DEFAULT_BRAND, type Brand } from "./brand";
+import { DEFAULT_BRAND, STATUS_DOT_COLORS, type Brand } from "./brand";
+import type { TabDot } from "./tabStatus";
 import { nameInitial, useFavicon } from "./useFavicon";
 
 const SHIPPED = `
@@ -13,19 +14,30 @@ const icon32 = () => document.head.querySelector('link[sizes="32x32"]')!.getAttr
 let canvasAvailable = true;
 let tainted = false;
 let drawn: string[] = [];
+let encodes = 0;
 function stubCanvas() {
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
     if (!canvasAvailable) return null;
+    const canvas = this as HTMLCanvasElement & { _dot?: string };
+    let arcOpen = false;
     const ctx: Record<string, unknown> = {
       measureText: () => ({ width: 10, actualBoundingBoxLeft: 0, actualBoundingBoxRight: 10, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2 }),
       fillText: (t: string) => drawn.push(`text:${t}`),
       drawImage: (img: { src?: string }) => drawn.push(`image:${img.src}`),
+      // The status dot is the last `arc` + `fill`; remember its colour on the canvas.
+      arc: () => (arcOpen = true),
+      fill: () => {
+        if (arcOpen) canvas._dot = String(ctx.fillStyle);
+        arcOpen = false;
+      },
     };
     return new Proxy(ctx, { get: (t, p: string) => (p in t ? t[p] : () => {}) }) as never;
   });
   vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockImplementation(function (this: HTMLCanvasElement) {
     if (tainted) throw new DOMException("tainted", "SecurityError");
-    return `data:image/png;${this.width};${drawn.at(-1) ?? ""}`;
+    encodes += 1;
+    const dot = (this as HTMLCanvasElement & { _dot?: string })._dot;
+    return `data:image/png;${this.width};${drawn.at(-1) ?? ""}${dot ? `;dot:${dot}` : ""}`;
   });
 }
 
@@ -56,6 +68,7 @@ beforeEach(() => {
   canvasAvailable = true;
   tainted = false;
   drawn = [];
+  encodes = 0;
   loads = () => true;
   stubCanvas();
   vi.stubGlobal("Image", FakeImage);
@@ -153,5 +166,73 @@ describe("nameInitial", () => {
     expect(nameInitial(" house")).toBe("H");
     expect(nameInitial("🦄 lab")).toBe("🦄");
     expect(nameInitial("")).toBe("P");
+  });
+});
+
+describe("useFavicon — live status dot (#958 part 3)", () => {
+  const ORANGE = STATUS_DOT_COLORS.running;
+  const GREEN = STATUS_DOT_COLORS.unread;
+  type P = { b: Brand; dot: TabDot | null };
+  const house = brand({ name: "House", logo: "🏠" });
+
+  it("puts an orange dot on the chip while running, green for unread, and clears it when idle", () => {
+    const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), { initialProps: { b: house, dot: "running" } });
+    expect(icon32()).toBe(`data:image/png;32;text:🏠;dot:${ORANGE}`);
+    expect(document.head.querySelector('link[sizes="16x16"]')!.getAttribute("href")).toBe(`data:image/png;16;text:🏠;dot:${ORANGE}`);
+    rerender({ b: house, dot: "unread" });
+    expect(icon32()).toBe(`data:image/png;32;text:🏠;dot:${GREEN}`);
+    rerender({ b: house, dot: null });
+    // Back to the plain brand chip — not the shipped icon, which this brand never had.
+    expect(icon32()).toBe("data:image/png;32;text:🏠");
+  });
+
+  it("never redraws the canvas for a status it has already drawn", () => {
+    const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), { initialProps: { b: house, dot: null } });
+    rerender({ b: house, dot: "running" });
+    const afterFirstRun = encodes;
+    // Same dot again (a count changed, say): no effect re-run, no draw.
+    rerender({ b: house, dot: "running" });
+    expect(encodes).toBe(afterFirstRun);
+    // Flip away and back: both are memoised, still no draw.
+    rerender({ b: house, dot: null });
+    rerender({ b: house, dot: "running" });
+    expect(encodes).toBe(afterFirstRun);
+    expect(icon32()).toBe(`data:image/png;32;text:🏠;dot:${ORANGE}`);
+  });
+
+  it("draws an all-defaults instance's dot on the SHIPPED icon, and restores it exactly when idle", async () => {
+    const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), {
+      initialProps: { b: DEFAULT_BRAND, dot: null },
+    });
+    expect(document.head.innerHTML).toBe(shipped);
+    rerender({ b: DEFAULT_BRAND, dot: "unread" });
+    await waitFor(() => expect(icon32()).toBe(`data:image/png;32;image:/icons/favicon-32.png;dot:${GREEN}`));
+    rerender({ b: DEFAULT_BRAND, dot: null });
+    expect(document.head.innerHTML).toBe(shipped);
+  });
+
+  it("leaves the shipped icons alone, without throwing, when there is no canvas", async () => {
+    canvasAvailable = false;
+    renderHook(() => useFavicon(DEFAULT_BRAND, "running"));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(document.head.innerHTML).toBe(shipped);
+  });
+
+  it("swaps a raw-URL image logo for the initial chip while a dot is needed", async () => {
+    loads = (_src, cors) => !cors; // shows, but can't be composited
+    const b = brand({ name: "house", logo: "/brand/logo.svg" });
+    const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), { initialProps: { b, dot: null } });
+    await waitFor(() => expect(icon32()).toBe("/brand/logo.svg"));
+    rerender({ b, dot: "running" });
+    expect(icon32()).toBe(`data:image/png;32;text:H;dot:${ORANGE}`);
+    rerender({ b, dot: null });
+    expect(icon32()).toBe("/brand/logo.svg");
+  });
+
+  it("composites the dot onto a CORS-readable image logo", async () => {
+    renderHook(() => useFavicon(brand({ name: "House", logo: "https://cdn.example/logo.png" }), "unread"));
+    await waitFor(() =>
+      expect(icon32()).toBe(`data:image/png;32;image:https://cdn.example/logo.png;dot:${GREEN}`),
+    );
   });
 });

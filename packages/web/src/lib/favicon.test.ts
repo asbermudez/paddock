@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { renderFaviconChip, restoreFavicon, setFavicon } from "./favicon";
+import { renderFaviconChip, restoreFavicon, setFavicon, shippedIconHref } from "./favicon";
 
 /** The three icon links index.html ships. */
 function installShippedLinks() {
@@ -141,5 +141,65 @@ describe("renderFaviconChip", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
     vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:,");
     expect(renderFaviconChip({ content: { glyph: "H" }, color: "#336699", size: 16 })).toBeNull();
+  });
+
+  it("draws no dot unless asked (#958 part 3)", () => {
+    const { ctx, calls } = fakeContext();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,AAA");
+    renderFaviconChip({ content: { glyph: "H" }, color: "#336699", size: 32 });
+    expect(calls.filter((c) => c.startsWith("arc:"))).toEqual([]);
+    expect(calls).not.toContain("set:globalCompositeOperation=destination-out");
+  });
+
+  it("punches a transparent ring, then fills the dot inside it, after the content", () => {
+    const { ctx, calls } = fakeContext();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,AAA");
+    renderFaviconChip({ content: { glyph: "H" }, color: "#336699", size: 16, dot: "#f97316" });
+
+    const text = calls.findIndex((c) => c.startsWith("fillText:"));
+    const cut = calls.indexOf("set:globalCompositeOperation=destination-out");
+    const dotFill = calls.lastIndexOf("set:fillStyle=#f97316");
+    expect(text).toBeGreaterThan(-1);
+    expect(cut).toBeGreaterThan(text);
+    expect(dotFill).toBeGreaterThan(cut);
+    // Bottom-right: radius 4 at 16px, centre (12,12); the hole is 1.6px wider.
+    const arcs = calls.filter((c) => c.startsWith("arc:")).map((c) => c.slice(4).split(",").slice(0, 3).map(Number));
+    expect(arcs).toEqual([
+      [12, 12, 5.6],
+      [12, 12, 4],
+    ]);
+    // The dot itself is drawn back in normal compositing (save/restore around the hole).
+    expect(calls.slice(cut, dotFill)).toContain("restore:");
+  });
+
+  it("draws a finished icon full-bleed with no tile", () => {
+    const { ctx, calls } = fakeContext();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,CCC");
+    const icon = { width: 32, height: 32 } as unknown as HTMLImageElement;
+    expect(renderFaviconChip({ content: { icon }, color: "transparent", size: 16, dot: "#22c55e" })).toBe(
+      "data:image/png;base64,CCC",
+    );
+    expect(calls).not.toContain("set:fillStyle=transparent");
+    expect(calls).not.toContain("clip:");
+    expect(calls.find((c) => c.startsWith("drawImage:"))).toMatch(/,0,0,16,16$/);
+    expect(calls).toContain("set:fillStyle=#22c55e");
+  });
+});
+
+describe("shippedIconHref", () => {
+  it("reads the shipped 32px icon, and still finds the original after a swap", () => {
+    installShippedLinks();
+    expect(shippedIconHref()).toBe("/icons/favicon-32.png");
+    setFavicon({ small: "data:image/png;s", large: "data:image/png;l", type: "image/png" });
+    expect(shippedIconHref()).toBe("/icons/favicon-32.png");
+  });
+
+  it("is null when the page ships no icon of its own", () => {
+    expect(shippedIconHref()).toBeNull();
+    setFavicon({ small: "s", large: "l" });
+    expect(shippedIconHref()).toBeNull();
   });
 });
