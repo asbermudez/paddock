@@ -96,7 +96,7 @@ describe("renderFaviconChip", () => {
     expect(renderFaviconChip({ content: { glyph: "H" }, color: "#336699", size: 32 })).toBeNull();
   });
 
-  it("draws the tile, then a glyph scaled so its ink fills ~70% and is centred", () => {
+  it("draws the tile, then a glyph scaled so its ink fills 76% and is centred", () => {
     const { ctx, calls } = fakeContext();
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
     vi.spyOn(HTMLCanvasElement.prototype, "toDataURL").mockReturnValue("data:image/png;base64,AAA");
@@ -105,14 +105,14 @@ describe("renderFaviconChip", () => {
     expect(url).toBe("data:image/png;base64,AAA");
     expect(calls).toContain("set:fillStyle=#336699");
     expect(calls).toContain("set:fillStyle=white");
-    // Fake ink is 0.9em wide x 0.9em tall: the final font is 22.4/0.9 px.
+    // Fake ink is 0.9em wide x 0.9em tall: the final font is 24.32/0.9 px.
     const fonts = calls.filter((c) => c.startsWith("set:font="));
-    expect(Number(/(\d+(?:\.\d+)?)px/.exec(fonts.at(-1)!)![1])).toBeCloseTo(22.4 / 0.9, 5);
+    expect(Number(/(\d+(?:\.\d+)?)px/.exec(fonts.at(-1)!)![1])).toBeCloseTo(24.32 / 0.9, 5);
     expect(fonts.at(-1)).toContain("Apple Color Emoji");
     const fill = calls.find((c) => c.startsWith("fillText:"))!;
     const [, x, y] = fill.slice("fillText:".length).split(",").map(Number);
-    expect(x).toBeCloseTo((32 - 22.4) / 2, 5);
-    expect(y).toBeCloseTo((32 - 22.4) / 2 + (22.4 / 0.9) * 0.8, 5);
+    expect(x).toBeCloseTo((32 - 24.32) / 2, 5);
+    expect(y).toBeCloseTo((32 - 24.32) / 2 + (24.32 / 0.9) * 0.8, 5);
   });
 
   it("returns null when the canvas is tainted (toDataURL throws)", () => {

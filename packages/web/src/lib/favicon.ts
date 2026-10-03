@@ -42,8 +42,8 @@ export const FAVICON_SIZES = { small: 16, large: 32 } as const;
 
 /** Corner radius as a fraction of the edge — matches the shipped icon's squircle-ish corners. */
 const RADIUS = 0.22;
-/** Share of the tile a glyph's ink box may fill. */
-const GLYPH_FILL = 0.7;
+/** Share of the tile a glyph's ink box may fill. Chrome reports an emoji's box a little larger than its ink, so 0.76 lands an emoji near the shipped icon's ~70% and a letter just over it. */
+const GLYPH_FILL = 0.76;
 /** Emoji first, so a pictograph renders in colour wherever the OS has a colour font. */
 const FONT_STACK = `"Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", system-ui, -apple-system, "Segoe UI", sans-serif`;
 
