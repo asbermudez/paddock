@@ -21,6 +21,18 @@ describe("projectInitial", () => {
     ["---", "-"],
     ["", "?"],
     ["   ", "?"],
+    // Invisible-only names must not render a blank chip.
+    ["​", "?"], // zero-width space
+    ["﻿", "?"], // BOM / ZWNBSP
+    ["​‍⁠‎", "?"], // ZWSP, ZWJ, word joiner, LRM (all \p{Cf})
+    ["́", "?"], // lone combining acute
+    ["́̈", "?"], // several lone combining marks
+    [" 　\t\n", "?"], // NBSP, ideographic space, controls
+    // …and leading invisibles are skipped, not shown.
+    ["​hushpod", "H"],
+    ["﻿‎ beacon", "B"],
+    ["́abc", "A"],
+    ["éclair", "É"], // a mark ON a letter is part of the visible grapheme
   ])("%j → %j", (name, want) => {
     expect(projectInitial(name)).toBe(want);
   });

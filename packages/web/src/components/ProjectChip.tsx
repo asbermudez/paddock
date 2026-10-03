@@ -32,9 +32,16 @@ function graphemes(s: string): string[] {
  * Leading whitespace and punctuation (`_scratch`, `.dotfiles`, `"quoted"`) are
  * skipped so the chip shows something meaningful; a name made only of
  * punctuation falls back to its first character, and an empty one to "?".
+ *
+ * Graphemes with nothing visible in them — whitespace, format characters
+ * (U+200B, U+FEFF, U+200D, bidi marks: `\p{Cf}`), controls, a lone combining
+ * mark — are dropped first; `trim()` alone misses most of them and would leave
+ * a blank chip. A name with nothing visible left gets "?".
  */
+const VISIBLE = /[^\p{Cf}\p{Cc}\p{M}\p{Z}\p{White_Space}]/u;
+
 export function projectInitial(name: string): string {
-  const gs = graphemes(name.trim());
+  const gs = graphemes(name.normalize("NFC")).filter((g) => VISIBLE.test(g));
   if (gs.length === 0) return "?";
   const meaningful = gs.find((g) => /[\p{L}\p{N}\p{Extended_Pictographic}\p{Regional_Indicator}]/u.test(g)) ?? gs[0];
   // Uppercase, unless that would widen it ("ß" → "SS") past the chip.
