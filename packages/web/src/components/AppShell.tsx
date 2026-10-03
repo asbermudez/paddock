@@ -535,8 +535,10 @@ export function AppShell() {
  * chip background comes from the runtime `--accent` CSS variable via `bg-accent-solid`.
  */
 function BrandLogo({ brand, className = "" }: { brand: ReturnType<typeof getBrand>; className?: string }) {
-  // A renamed instance on the default accent gets the same name-derived colour
-  // as its favicon (#958), so tab and chip match; `--accent` itself is untouched.
+  // A renamed instance on the default accent gets exactly its favicon's
+  // name-derived colour (#958). An explicit accent stays on the theme-solved
+  // `--accent` (same hue as the favicon's raw hex, not necessarily the same
+  // lightness). `--accent` itself is never touched.
   const override = sidebarChipOverride(brand);
   return (
     <span
