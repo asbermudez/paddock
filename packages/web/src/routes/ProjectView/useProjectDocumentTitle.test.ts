@@ -6,7 +6,6 @@ import { projectTitleParts, type ProjectTitleInput } from "./useProjectDocumentT
 const base: ProjectTitleInput = {
   view: "home",
   root: false,
-  brand: "House",
   workspaceName: "hushpod",
   activeSession: null,
   activeChat: null,
@@ -24,10 +23,6 @@ describe("projectTitleParts (#958)", () => {
     expect(title({ view: "home" })).toBe("hushpod — House");
   });
 
-  it("root home whose name is the brand is just the brand", () => {
-    expect(title({ view: "home", root: true, workspaceName: "house" })).toBe("House");
-  });
-
   it("chat: the chat's name, then the workspace", () => {
     const chat = makeChat({ sessionId: "s1", name: "Fix the leaking tap" });
     expect(title({ view: "chat", activeSession: "s1", activeChat: chat })).toBe(
@@ -35,15 +30,25 @@ describe("projectTitleParts (#958)", () => {
     );
   });
 
-  it("root chat when the root is named for the brand: no duplication", () => {
-    const chat = makeChat({ sessionId: "s1", name: "Fix the leaking tap" });
-    expect(
-      title({ view: "chat", root: true, workspaceName: "House", activeSession: "s1", activeChat: chat }),
-    ).toBe("Fix the leaking tap — House");
+  it("chat named like its project stays distinct from the project's Home", () => {
+    const chat = makeChat({ sessionId: "s1", name: "hushpod" });
+    expect(title({ view: "chat", activeSession: "s1", activeChat: chat })).toBe(
+      "hushpod · hushpod — House",
+    );
   });
 
-  it("root named differently from the brand keeps its name", () => {
-    expect(title({ view: "home", root: true, workspaceName: "projects" })).toBe("projects — House");
+  it("the ROOT workspace's name is always omitted (#921's default 'Home' included)", () => {
+    const chat = makeChat({ sessionId: "s1", name: "Fix the leaking tap" });
+    for (const workspaceName of ["Home", "house", "projects"]) {
+      const root = { root: true, workspaceName };
+      expect(title({ ...root, view: "home" })).toBe("House");
+      expect(title({ ...root, view: "chat", activeSession: "s1", activeChat: chat })).toBe(
+        "Fix the leaking tap — House",
+      );
+      expect(title({ ...root, view: "chat", activeSession: null })).toBe("New chat — House");
+      expect(title({ ...root, view: "files" })).toBe("Files — House");
+      expect(title({ ...root, view: "settings" })).toBe("Settings — House");
+    }
   });
 
   it("a PROJECT named like the brand keeps its name, so its chats differ from root chats", () => {
