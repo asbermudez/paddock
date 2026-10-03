@@ -18,6 +18,18 @@ export const DEFAULT_BRAND: Brand = {
   accent: "#c2603c",
 };
 
+/**
+ * The favicon's live-status dot colours (#958 part 3), chosen by Ed: ORANGE while
+ * a turn is in flight, GREEN for an unseen reply. Literals, and here, because
+ * they are painted onto a canvas that sits in the browser's own tab strip — no
+ * theme token reaches it, and the dot must read the same on every theme. This
+ * file is the one place the colour lint allows a hex for exactly that reason.
+ */
+export const STATUS_DOT_COLORS = {
+  running: "#f97316",
+  unread: "#22c55e",
+} as const;
+
 /** OpenAPI reference availability for this instance (see server openapi config). */
 export interface OpenApiInfo {
   enabled: boolean;

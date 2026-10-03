@@ -1,6 +1,7 @@
 import type { Chat, Project } from "../../lib/types";
 import { useProjects } from "../../lib/projects-context";
 import { useDocumentTitle, type TitlePart } from "../../lib/documentTitle";
+import { usePublishTabScope, type TabScope } from "../../lib/tabStatus";
 import type { ProjectViewTab } from "./urls";
 
 /**
@@ -99,6 +100,33 @@ export interface ProjectDocumentTitleState
   chats: readonly Chat[];
   /** The #154 last-seen copy of the open chat, for when it drops out of `chats`. */
   lastActiveChat: Chat | null;
+  /**
+   * The derived unread set (`useUnreadChats`). The open chat is only ever in it
+   * while its mark-seen is deferred because the tab is hidden — exactly the
+   * "finished while you were away" the chat page's `✓ ` reports.
+   */
+  unread?: ReadonlySet<string>;
+}
+
+/**
+ * What this tab's live status is about (#958 part 3): the open chat on a chat
+ * page; the whole instance on root Home; otherwise the workspace — a project's
+ * slug, or the root's `""` for the root's own tabs, matching its sidebar row. A
+ * fresh, unsent chat has no chat yet, so it reports its workspace.
+ */
+export function projectTabScope(input: {
+  view: ProjectViewTab;
+  root: boolean;
+  slug: string;
+  activeSession: string | null;
+  unread?: ReadonlySet<string>;
+}): TabScope {
+  const { view, root, slug, activeSession, unread } = input;
+  if (view === "chat" && activeSession) {
+    return { kind: "chat", sessionId: activeSession, unread: unread?.has(activeSession) ?? false };
+  }
+  if (root && view === "home") return { kind: "instance" };
+  return { kind: "workspace", key: slug };
 }
 
 export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void {
@@ -115,6 +143,7 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
   const activeChat =
     chats.find((c) => c.sessionId === activeSession) ??
     (lastActiveChat?.sessionId === activeSession ? lastActiveChat : null);
+  const prefix = usePublishTabScope(projectTabScope(state));
   useDocumentTitle(
     projectTitleParts({
       ...state,
@@ -122,5 +151,6 @@ export function useProjectDocumentTitle(state: ProjectDocumentTitleState): void 
       activeChat,
       loaded: project !== null,
     }),
+    { prefix },
   );
 }

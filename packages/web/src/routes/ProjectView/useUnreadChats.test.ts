@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useUnreadChats } from "./useUnreadChats";
 import { makeChat } from "../../test/factories";
@@ -111,5 +111,177 @@ describe("useUnreadChats — a turn completing in the focused chat (#608)", () =
     // …so the chat is not unread once you leave it.
     rerender(h.props({ view: "chats" }));
     expect(result.current.unread.has(sid)).toBe(false);
+  });
+});
+
+/**
+ * Seen only while visible (#958): the automatic marks wait for the tab to be
+ * shown, so a reply that lands in a background tab is still unread when you
+ * come back to it — and is marked seen the moment you do.
+ */
+describe("useUnreadChats — marks seen only while the tab is visible (#958)", () => {
+  let visibility: DocumentVisibilityState = "visible";
+  beforeEach(() => {
+    visibility = "visible";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+  });
+  afterEach(() => {
+    // Back to jsdom's own getter on the prototype.
+    delete (document as unknown as Record<string, unknown>).visibilityState;
+  });
+  const setVisibility = (v: DocumentVisibilityState) =>
+    act(() => {
+      visibility = v;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  const seenIds = () => markChatSeen.mock.calls.map((c) => (c as unknown[])[1]);
+
+  it("a chat opened in a background tab is not marked seen until the tab is shown", () => {
+    visibility = "hidden";
+    const h = harness("sess-bg");
+    renderHook((p: Props) => useUnreadChats(p), { initialProps: h.props() });
+    expect(markChatSeen).not.toHaveBeenCalled();
+    expect(h.onSeen).not.toHaveBeenCalled();
+
+    setVisibility("visible");
+    // An EXPLICIT seen (you opened it): the manual-unread mirror runs too.
+    expect(seenIds()).toEqual(["sess-bg"]);
+    expect(markChatSeen.mock.calls[0][3]).toBeUndefined();
+    expect(h.onSeen).toHaveBeenCalledWith("sess-bg");
+  });
+
+  it("a turn landing in a hidden tab makes the OPEN chat unread, then clears on return", async () => {
+    const sid = "sess-hidden-turn";
+    const h = harness(sid);
+    const { rerender, result } = renderHook((p: Props) => useUnreadChats(p), {
+      initialProps: h.props({ running: [sid] }),
+    });
+    markChatSeen.mockClear();
+    h.onSeen.mockClear();
+
+    setVisibility("hidden");
+    await act(async () => {
+      rerender(h.props({ running: [] }));
+    });
+    // Nobody watched it land: no mark, and the open chat now counts as unread.
+    expect(markChatSeen).not.toHaveBeenCalled();
+    expect(result.current.unread.has(sid)).toBe(true);
+
+    setVisibility("visible");
+    // The deferred mark is the INFERRED flavour (#608): keepUnread, no mirror.
+    expect(seenIds()).toEqual([sid]);
+    expect(markChatSeen.mock.calls[0][3]).toEqual({ keepUnread: true });
+    expect(h.onSeen).not.toHaveBeenCalled();
+    expect(result.current.unread.has(sid)).toBe(false);
+  });
+
+  it("opened hidden AND a turn landed hidden → one explicit mark on return", async () => {
+    visibility = "hidden";
+    const sid = "sess-both";
+    const h = harness(sid);
+    const { rerender } = renderHook((p: Props) => useUnreadChats(p), {
+      initialProps: h.props({ running: [sid] }),
+    });
+    await act(async () => {
+      rerender(h.props({ running: [] }));
+    });
+    expect(markChatSeen).not.toHaveBeenCalled();
+    setVisibility("visible");
+    expect(seenIds()).toEqual([sid]);
+    expect(markChatSeen.mock.calls[0][3]).toBeUndefined();
+    expect(h.onSeen).toHaveBeenCalledWith(sid);
+  });
+
+  it("leaving the chat before the tab is shown drops the mark: no stale seen for the wrong chat", async () => {
+    visibility = "hidden";
+    const a = "sess-a";
+    const h = harness(a);
+    const { rerender, result } = renderHook((p: Props) => useUnreadChats(p), {
+      initialProps: h.props({ running: [a] }),
+    });
+    await act(async () => {
+      rerender(h.props({ running: [] }));
+    });
+    expect(result.current.unread.has(a)).toBe(true);
+    // Focus moves elsewhere (a redirect, say) while still hidden.
+    rerender({ ...h.props(), view: "home", activeSession: null });
+    setVisibility("visible");
+    expect(markChatSeen).not.toHaveBeenCalled();
+    // …so the reply nobody saw stays unread.
+    expect(result.current.unread.has(a)).toBe(true);
+  });
+
+  it("switching chats while hidden defers the NEW chat, and marks only it on return", () => {
+    visibility = "hidden";
+    const h = harness("sess-a");
+    const { rerender } = renderHook((p: Props) => useUnreadChats(p), { initialProps: h.props() });
+    rerender({ ...h.props(), activeSession: "sess-b" });
+    setVisibility("visible");
+    expect(seenIds()).toEqual(["sess-b"]);
+  });
+
+  it("returning to a visible tab does not re-mark an already-seen chat (a manual flag survives)", () => {
+    const sid = "sess-flag-survives";
+    const h = harness(sid);
+    const { rerender } = renderHook((p: Props) => useUnreadChats(p), { initialProps: h.props() });
+    markChatSeen.mockClear();
+    h.onSeen.mockClear();
+    act(() => h.flagUnread());
+    rerender(h.props());
+    setVisibility("hidden");
+    setVisibility("visible");
+    expect(markChatSeen).not.toHaveBeenCalled();
+    expect(h.onSeen).not.toHaveBeenCalled();
+  });
+
+  it("a visible tab behaves exactly as before: marks on open and on completion", async () => {
+    const sid = "sess-visible";
+    const h = harness(sid);
+    const { rerender, result } = renderHook((p: Props) => useUnreadChats(p), {
+      initialProps: h.props({ running: [sid] }),
+    });
+    expect(seenIds()).toEqual([sid]);
+    await act(async () => {
+      rerender(h.props({ running: [] }));
+    });
+    expect(seenIds()).toEqual([sid, sid]);
+    expect(result.current.unread.has(sid)).toBe(false);
+  });
+});
+
+/**
+ * The deferred mark is applied before the browser can paint (#958). A browser
+ * paints only at a TASK boundary, never between microtasks, so "before paint"
+ * here means: by the time the microtask queue drains after `visibilitychange`,
+ * the open chat is no longer unread. Run outside `act()` on purpose — `act`
+ * flushes everything, which is exactly what would hide the difference. With a
+ * plain `useEffect` the clear only lands on a later task, and this fails.
+ */
+describe("useUnreadChats — the deferred mark lands before paint (#958)", () => {
+  it("clears the open chat's unread state within the same task as the visibilitychange", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    try {
+      const sid = "sess-prepaint";
+      const h = harness(sid);
+      const { result, rerender } = renderHook((p: Props) => useUnreadChats(p), {
+        initialProps: h.props({ running: [sid] }),
+      });
+      await act(async () => {
+        rerender(h.props({ running: [] }));
+      });
+      expect(result.current.unread.has(sid)).toBe(true);
+
+      g.IS_REACT_ACT_ENVIRONMENT = false;
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      // Drain microtasks only — no task boundary, so no paint could have happened.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(result.current.unread.has(sid)).toBe(false);
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = true;
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
   });
 });

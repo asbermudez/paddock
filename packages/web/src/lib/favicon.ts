@@ -12,14 +12,20 @@
  *    tags `index.html` ships, remembering the originals so they can be put
  *    back. The shipped tags stay the pre-JS default and the all-defaults look.
  *
- * Layering note for the live status dot (#958 part 3): the dot is one more
- * pass over the same canvas after `drawContent`, which is why drawing is split
- * into steps rather than done in one function.
+ * The live status dot (#958 part 3) is one more pass over the same canvas after
+ * `drawContent`: a hole punched through the chip (the "cut-out ring", so the dot
+ * reads on any chip colour, including one the same hue as the dot) and the dot
+ * drawn inside it.
  */
 
-/** What goes on the chip: a glyph/emoji string, or an already-loaded image. */
+/**
+ * What goes on the chip: a glyph/emoji string, an already-loaded image (cover-
+ * fitted onto the tile), or a finished `icon` — the shipped favicon PNG — drawn
+ * as-is with NO tile, so an all-defaults instance's status icon is its own icon
+ * plus a dot rather than a chip it never had.
+ */
 export type ChipImage = CanvasImageSource & { width: number; height: number; naturalWidth?: number; naturalHeight?: number };
-export type ChipContent = { glyph: string } | { image: ChipImage };
+export type ChipContent = { glyph: string } | { image: ChipImage } | { icon: ChipImage };
 
 export interface FaviconChipOptions {
   content: ChipContent;
@@ -29,6 +35,8 @@ export interface FaviconChipOptions {
   foreground?: string;
   /** Square edge in device pixels. */
   size: number;
+  /** Status dot colour (#958 part 3); omitted = no dot. */
+  dot?: string;
   /** Document to create the canvas in (tests). */
   doc?: Document;
 }
@@ -113,8 +121,38 @@ function drawImage(ctx: CanvasRenderingContext2D, size: number, img: ChipImage):
 }
 
 function drawContent(ctx: CanvasRenderingContext2D, opts: FaviconChipOptions): void {
-  if ("glyph" in opts.content) drawGlyph(ctx, opts.size, opts.content.glyph, opts.foreground ?? "white");
-  else drawImage(ctx, opts.size, opts.content.image);
+  const { content, size } = opts;
+  if ("glyph" in content) drawGlyph(ctx, size, content.glyph, opts.foreground ?? "white");
+  else if ("image" in content) drawImage(ctx, size, content.image);
+  else ctx.drawImage(content.icon, 0, 0, size, size);
+}
+
+/**
+ * Dot radius and the ring cut around it, as fractions of the edge: ~3.5px with
+ * a ~1px ring at 16px. Small enough to leave the logo readable, big enough to
+ * read at a glance on light and dark tab strips (checked on both).
+ */
+const DOT_R = 0.22;
+const DOT_RING = 0.07;
+
+/**
+ * The status dot, bottom-right. The ring is a HOLE (`destination-out`), not a
+ * stroke in some background colour: the tab strip behind it is the browser's,
+ * light or dark, and only transparency matches both.
+ */
+function drawDot(ctx: CanvasRenderingContext2D, size: number, color: string): void {
+  const r = size * DOT_R;
+  const c = size - r;
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.beginPath();
+  ctx.arc(c, c, r + size * DOT_RING, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  ctx.beginPath();
+  ctx.arc(c, c, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
 }
 
 /**
@@ -129,8 +167,9 @@ export function renderFaviconChip(opts: FaviconChipOptions): string | null {
     canvas.height = opts.size;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    drawTile(ctx, opts.size, opts.color);
+    if (!("icon" in opts.content)) drawTile(ctx, opts.size, opts.color);
     drawContent(ctx, opts);
+    if (opts.dot) drawDot(ctx, opts.size, opts.dot);
     const url = canvas.toDataURL("image/png");
     // A canvas that cannot encode (some stubs) answers "data:," — not an icon.
     return url.startsWith("data:image/png") ? url : null;
@@ -202,6 +241,19 @@ export function restoreFavicon(doc: Document = document): void {
     link.removeAttribute(ORIG_HREF);
     link.removeAttribute(ORIG_TYPE);
   }
+}
+
+/**
+ * The shipped 32px icon's URL — the base an all-defaults instance draws its
+ * status dot on. Read from the DOM (its stashed original if it has been swapped)
+ * rather than hard-coded, so it follows whatever `index.html` ships.
+ */
+export function shippedIconHref(doc: Document = document): string | null {
+  const link =
+    doc.head.querySelector<HTMLLinkElement>('link[rel~="icon"][sizes="32x32"]') ??
+    doc.head.querySelector<HTMLLinkElement>('link[rel~="icon"][type="image/png"]');
+  if (!link || link.hasAttribute(CREATED)) return null;
+  return link.getAttribute(ORIG_HREF) ?? link.getAttribute("href");
 }
 
 /** Load an image, optionally CORS-enabled (needed for the canvas to stay readable). */

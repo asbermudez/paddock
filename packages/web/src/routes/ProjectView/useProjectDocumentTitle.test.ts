@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { formatDocumentTitle } from "../../lib/documentTitle";
 import { makeChat } from "../../test/factories";
-import { projectTitleParts, type ProjectTitleInput } from "./useProjectDocumentTitle";
+import { projectTabScope, projectTitleParts, type ProjectTitleInput } from "./useProjectDocumentTitle";
+import { computeTabStatus, tabStatusPrefix } from "../../lib/tabStatus";
 
 const base: ProjectTitleInput = {
   view: "home",
@@ -111,5 +112,58 @@ describe("projectTitleParts (#958)", () => {
     expect(title({ view: "history" })).toBe("History · hushpod — House");
     expect(title({ view: "settings" })).toBe("Settings · hushpod — House");
     expect(title({ view: "triggers" })).toBe("Triggers · hushpod — House");
+  });
+});
+
+describe("projectTabScope (#958 part 3)", () => {
+  const scope = (over: Partial<Parameters<typeof projectTabScope>[0]>) =>
+    projectTabScope({ view: "home", root: false, slug: "hushpod", activeSession: null, ...over });
+
+  it("a chat page is about its chat; unread only if it is in the unread set", () => {
+    expect(scope({ view: "chat", activeSession: "s1" })).toEqual({ kind: "chat", sessionId: "s1", unread: false });
+    expect(scope({ view: "chat", activeSession: "s1", unread: new Set(["s1"]) })).toEqual({
+      kind: "chat",
+      sessionId: "s1",
+      unread: true,
+    });
+  });
+
+  it("a new, unsent chat reports its workspace", () => {
+    expect(scope({ view: "chat", activeSession: null })).toEqual({ kind: "workspace", key: "hushpod" });
+  });
+
+  it("project tabs report the project; root Home the instance; root's other tabs the root workspace", () => {
+    expect(scope({ view: "files" })).toEqual({ kind: "workspace", key: "hushpod" });
+    expect(scope({ view: "home", root: true, slug: "" })).toEqual({ kind: "instance" });
+    expect(scope({ view: "settings", root: true, slug: "" })).toEqual({ kind: "workspace", key: "" });
+  });
+
+  it("composes with the root-omission rule: a root chat reads `✓ Fix the tap — House`", () => {
+    const sc = scope({ view: "chat", root: true, slug: "", activeSession: "s1", unread: new Set(["s1"]) });
+    const status = computeTabStatus(sc, { active: new Map(), finished: [], hiddenSince: null });
+    const parts = projectTitleParts({
+      ...base,
+      view: "chat",
+      root: true,
+      workspaceName: "Home",
+      activeSession: "s1",
+      activeChat: makeChat({ sessionId: "s1", name: "Fix the tap" }),
+    });
+    expect(formatDocumentTitle({ parts, brand: "House", prefix: tabStatusPrefix(status) })).toBe("✓ Fix the tap — House");
+  });
+
+  it("composes with the title: `● (2) hushpod — House`", () => {
+    const status = computeTabStatus(scope({}), {
+      active: new Map([["s9", "hushpod"]]),
+      // Two replies landed after the tab was hidden at t=1000.
+      finished: [
+        { projectSlug: "hushpod", at: 2000 },
+        { projectSlug: "hushpod", at: 3000 },
+      ],
+      hiddenSince: 1000,
+    });
+    expect(formatDocumentTitle({ parts: projectTitleParts(base), brand: "House", prefix: tabStatusPrefix(status) })).toBe(
+      "● (2) hushpod — House",
+    );
   });
 });

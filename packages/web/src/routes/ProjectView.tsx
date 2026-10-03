@@ -708,9 +708,9 @@ export function ProjectView({
         }
     : null;
 
-  // The tab's title (#958) — above the early returns, so it's never conditional.
+  // The tab's title + live status (#958) — above the early returns, so it's never conditional.
   useProjectDocumentTitle({ root, slug, project, chats, lastActiveChat: lastActiveChatRef.current,
-    view, activeSession, pendingChat, filesSubpath, changeFile: routeChangeFile });
+    view, activeSession, pendingChat, filesSubpath, changeFile: routeChangeFile, unread });
 
   // Deep-link behavior: when the open chat is archived, expand the Archived
   // section so the user can see where they are — once per session, so a manual
