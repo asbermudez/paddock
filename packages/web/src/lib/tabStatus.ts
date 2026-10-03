@@ -5,19 +5,29 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
  * dot on the favicon, so a tab says "working" or "something landed" without
  * being looked at.
  *
- * | Page          | Running (orange dot, `● `)   | Unread (green dot)               |
- * |---------------|------------------------------|----------------------------------|
- * | Chat page     | this chat's turn in flight   | finished while hidden: `✓ `      |
- * | Project pages | any chat in the project      | `(n) ` the project's unread count|
- * | Root `/`      | anything on the instance     | `(n) ` the instance's unread     |
+ * | Page          | Running (orange dot, `● `)   | Unread (green dot)                        |
+ * |---------------|------------------------------|-------------------------------------------|
+ * | Chat page     | this chat's turn in flight   | `✓ ` this chat is unread while you're on  |
+ * |               |                              | it in a background tab                    |
+ * | Project pages | any chat in the project      | `(n) ` replies landed while tab hidden    |
+ * | Root `/`      | anything on the instance     | `(n) ` same, instance-wide                |
  *
  * Running wins the dot; the title carries both (`● (2) hushpod — House`).
+ *
+ * Project/root `(n)` is "NEW since you last looked at THIS tab", not the unread
+ * backlog. Backlog never expires, so counting it would leave the root tab
+ * permanently `(n)` + green on any real instance — noise, not signal. Only a
+ * reply that landed after the tab was last visible counts: nothing counts while
+ * the tab IS visible (the sidebar and fleet strip are right there), and a tab
+ * loaded hidden starts its baseline at load. The sidebar and fleet-strip counts
+ * are untouched — they still show the whole backlog.
  *
  * The data lives in two places, so the plumbing is a round trip through one
  * context, provided by `AppShell`:
  *  - the ROUTE knows what the tab is about (a {@link TabScope}) and, for a chat,
  *    whether its reply is unseen — it publishes that with {@link usePublishTabScope};
- *  - the SHELL knows the running set and the per-workspace badges, so it resolves
+ *  - the SHELL knows the running set, the unread list and the tab's visibility
+ *    baseline, so it resolves
  *    the scope into a {@link TabStatus}, draws the favicon from it, and hands it
  *    back down through the same context for the route's title prefix.
  * A route that publishes nothing (Discover, Config, the grid) shows no status.
@@ -41,38 +51,46 @@ export interface TabStatus {
 
 export const IDLE_TAB_STATUS: TabStatus = { running: false, unread: 0, kind: "none" };
 
-/** Per-workspace counts, as the sidebar badges them. Keys are workspace keys; the root's is `""`. */
-export interface WorkspaceBadge {
-  unread: number;
-  inflight: number;
+/** A chat holding an unread reply, as the shell's badge derivation lists them. */
+export interface TabFinished {
+  /** Workspace key; the root's is `""`. */
+  projectSlug: string;
+  /** When its reply landed, epoch ms. */
+  at: number;
 }
 
 export interface TabStatusInputs {
-  badges: ReadonlyMap<string, WorkspaceBadge>;
   /** sessionId → workspace key, every turn running right now. */
   active: ReadonlyMap<string, string>;
+  /** Every chat with an unread reply (the sidebar's backlog). */
+  finished: readonly TabFinished[];
+  /**
+   * When the tab was last visible (epoch ms), or null while it IS visible. Only
+   * replies landed after this count toward a project/root `(n)`.
+   */
+  hiddenSince: number | null;
 }
 
 /** Resolve a scope against the shell's live data. Pure. */
-export function computeTabStatus(scope: TabScope | null, { badges, active }: TabStatusInputs): TabStatus {
+export function computeTabStatus(
+  scope: TabScope | null,
+  { active, finished, hiddenSince }: TabStatusInputs,
+): TabStatus {
   if (!scope) return IDLE_TAB_STATUS;
-  switch (scope.kind) {
-    case "chat": {
-      const running = active.has(scope.sessionId);
-      // A new turn in flight supersedes "finished while you were away".
-      return { kind: "chat", running, unread: !running && scope.unread ? 1 : 0 };
-    }
-    case "workspace": {
-      // `badges.get` — never a truthiness guard: the root workspace's key is "".
-      const b = badges.get(scope.key);
-      return { kind: "workspace", running: (b?.inflight ?? 0) > 0, unread: b?.unread ?? 0 };
-    }
-    case "instance": {
-      let unread = 0;
-      for (const b of badges.values()) unread += b.unread;
-      return { kind: "instance", running: active.size > 0, unread };
-    }
+  if (scope.kind === "chat") {
+    const running = active.has(scope.sessionId);
+    // A new turn in flight supersedes "finished while you were away".
+    return { kind: "chat", running, unread: !running && scope.unread ? 1 : 0 };
   }
+  // Compare keys with ===, never truthiness: the root workspace's key is "".
+  const inScope = (key: string) => scope.kind === "instance" || key === scope.key;
+  let running = false;
+  for (const key of active.values()) if (inScope(key)) running = true;
+  let unread = 0;
+  if (hiddenSince !== null) {
+    for (const f of finished) if (f.at > hiddenSince && inScope(f.projectSlug)) unread += 1;
+  }
+  return { kind: scope.kind, running, unread };
 }
 
 /** The title prefix, caller-ready (trailing space included), or "". */
@@ -135,18 +153,38 @@ export function usePublishTabScope(scope: TabScope | null): string {
 }
 
 /**
- * The shell's side: hold the published scope, resolve it against the live
- * badges + running set, and produce the context value. The value's identity
- * changes only when what it renders changes, so a badge recompute that moves
- * nothing in scope re-renders no consumer and redraws no favicon.
+ * When this tab was last visible, or null while it is. Initialised to load time
+ * for a tab loaded hidden; set to "now" each time it is hidden.
  */
-export function useTabStatusState(inputs: TabStatusInputs): TabStatusContextValue {
+export function useHiddenSince(): number | null {
+  const [since, setSince] = useState<number | null>(() =>
+    typeof document !== "undefined" && document.visibilityState === "hidden" ? Date.now() : null,
+  );
+  useEffect(() => {
+    const sync = () =>
+      setSince((prev) =>
+        document.visibilityState === "hidden" ? (prev ?? Date.now()) : null,
+      );
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
+  return since;
+}
+
+/**
+ * The shell's side: hold the published scope, resolve it against the live
+ * running set + unread list and this tab's visibility baseline, and produce the
+ * context value. The value's identity changes only when what it renders
+ * changes, so a recompute that moves nothing in scope re-renders no consumer
+ * and redraws no favicon.
+ */
+export function useTabStatusState(inputs: Omit<TabStatusInputs, "hiddenSince">): TabStatusContextValue {
   const [scope, setScopeState] = useState<TabScope | null>(null);
   const setScope = useCallback((next: TabScope | null) => {
     setScopeState((prev) => (tabScopeKey(prev) === tabScopeKey(next) ? prev : next));
   }, []);
-  const { badges, active } = inputs;
-  const computed = computeTabStatus(scope, { badges, active });
+  const hiddenSince = useHiddenSince();
+  const computed = computeTabStatus(scope, { ...inputs, hiddenSince });
   const scopeKey = tabScopeKey(scope);
   const statusKey = `${scopeKey}|${computed.kind}|${computed.running ? 1 : 0}|${computed.unread}`;
   return useMemo(

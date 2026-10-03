@@ -47,6 +47,19 @@ async function killChat(page: Page, slug: string, sessionId: string): Promise<vo
   await page.request.delete(`/api/projects/${slug}/chats/${sessionId}`);
 }
 
+/** A chat with a landed reply, then flagged unread: backlog the tab must NOT count. */
+async function seedUnreadBacklog(page: Page, slug: string, marker: string): Promise<string> {
+  await page.goto(`/projects/${slug}/chat`);
+  await page.getByPlaceholder(/Message Claude/i).fill(marker);
+  await page.getByRole("button", { name: /^Send$/ }).click();
+  await expect(page.getByText(/Acknowledged:/).first()).toBeVisible({ timeout: 30_000 });
+  await page.waitForURL(/\/chat\/[a-z0-9-]+$/, { timeout: 30_000 });
+  const sessionId = new URL(page.url()).pathname.split("/").pop()!;
+  const res = await page.request.post(`/api/projects/${slug}/chats/${sessionId}/unread`, { data: { unread: true } });
+  expect(res.ok()).toBe(true);
+  return sessionId;
+}
+
 async function setHidden(page: Page, hidden: boolean): Promise<void> {
   await page.evaluate((h) => {
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
@@ -71,25 +84,52 @@ test("a running turn prefixes the chat's title with ● and dots the favicon; bo
   await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
 });
 
-test("a project page and root Home show ● while one of its chats runs", async ({ page }) => {
+test("a project page and root Home show only ● while running — the unread backlog never counts", async ({
+  page,
+}) => {
   const name = uniq("TS Proj");
   const slug = await createProject(page, name);
+  await seedUnreadBacklog(page, slug, uniq("tsbacklog"));
   const sessionId = await startHangingTurn(page, slug, uniq("tsproj"));
   try {
     // In-app navigation only — a reload would drop the socket and the running set.
     await page.getByTestId("workspace-tabs").getByRole("button", { name: /^Home/ }).click();
     await expect(page).toHaveURL(new RegExp(`/projects/${slug}/home$`));
+    // The backlog is real — the sidebar still counts it…
+    await expect(
+      page.getByRole("complementary").locator(`a[href="/projects/${slug}"]`).getByLabel(/unread repl/),
+    ).toBeVisible({ timeout: 15_000 });
+    // …but the tab says only "running": no `(n)`.
     await expect(page).toHaveTitle(new RegExp(`^● ${name} — `), { timeout: 15_000 });
 
-    // Root Home aggregates the instance. The shared e2e server may hold other
-    // tests' unread chats, so the count is matched loosely.
+    // Root Home aggregates the instance, and the shared e2e server holds plenty
+    // of other tests' unread chats — none of which may surface as a count.
     await page.getByRole("complementary").getByRole("link", { name: /^Home/ }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page).toHaveTitle(/^● (\(\d+\) )?/, { timeout: 15_000 });
+    await expect(page).toHaveTitle(/^● /, { timeout: 15_000 });
+    await expect(page).not.toHaveTitle(/\(\d+\)/);
     await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
   } finally {
     await killChat(page, slug, sessionId);
   }
+});
+
+test("a project page counts (1) for a reply that lands while hidden, and clears when shown", async ({ page }) => {
+  const name = uniq("TS Count");
+  const slug = await createProject(page, name);
+  await seedUnreadBacklog(page, slug, uniq("tscountbacklog"));
+  await startRunningTurn(page, { slug, marker: uniq("tscount") });
+  await page.getByTestId("workspace-tabs").getByRole("button", { name: /^Home/ }).click();
+  await expect(page).toHaveURL(new RegExp(`/projects/${slug}/home$`));
+  // Hide inside the ~12s [[SLOWTOOL]] window, so the reply lands while hidden.
+  await setHidden(page, true);
+  // Exactly one: the new reply. The backlog chat is not counted.
+  await expect(page).toHaveTitle(new RegExp(`^\\(1\\) ${name} — `), { timeout: 40_000 });
+  await expect.poll(() => icon32(page)).toMatch(/^data:image\/png/);
+
+  await setHidden(page, false);
+  await expect(page).toHaveTitle(new RegExp(`^${name} — `), { timeout: 10_000 });
+  await expect.poll(() => icon32(page)).toBe("/icons/favicon-32.png");
 });
 
 test("a reply landing in a hidden tab shows ✓ until the tab is shown, then the SERVER is told", async ({

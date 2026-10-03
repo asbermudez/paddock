@@ -164,12 +164,13 @@ describe("renderFaviconChip", () => {
     expect(text).toBeGreaterThan(-1);
     expect(cut).toBeGreaterThan(text);
     expect(dotFill).toBeGreaterThan(cut);
-    // Bottom-right: radius 4 at 16px, centre (12,12); the hole is 1.6px wider.
+    // Bottom-right: radius 0.22 × 16 = 3.52, centre 12.48; the hole is 0.07 × 16 wider.
     const arcs = calls.filter((c) => c.startsWith("arc:")).map((c) => c.slice(4).split(",").slice(0, 3).map(Number));
-    expect(arcs).toEqual([
-      [12, 12, 5.6],
-      [12, 12, 4],
-    ]);
+    expect(arcs).toHaveLength(2);
+    const [[hx, hy, hr], [dx, dy, dr]] = arcs;
+    expect([hx, hy, dx, dy].every((v) => Math.abs(v - 12.48) < 1e-9)).toBe(true);
+    expect(dr).toBeCloseTo(3.52, 9);
+    expect(hr).toBeCloseTo(3.52 + 1.12, 9);
     // The dot itself is drawn back in normal compositing (save/restore around the hole).
     expect(calls.slice(cut, dotFill)).toContain("restore:");
   });

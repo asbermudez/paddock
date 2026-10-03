@@ -235,15 +235,19 @@ describe("useFavicon — live status dot (#958 part 3)", () => {
     expect(document.head.innerHTML).toBe(shipped);
   });
 
-  it("swaps a raw-URL image logo for the initial chip while a dot is needed", async () => {
+  it("keeps a raw-URL image logo as the icon while a status shows — no dot, no identity swap", async () => {
     loads = (_src, cors) => !cors; // shows, but can't be composited
     const b = brand({ name: "house", logo: "/brand/logo.svg" });
     const { rerender } = renderHook(({ b, dot }: P) => useFavicon(b, dot), { initialProps: { b, dot: null } });
     await waitFor(() => expect(icon32()).toBe("/brand/logo.svg"));
+    const before = encodes;
     rerender({ b, dot: "running" });
-    expect(icon32()).toBe(`data:image/png;32;text:H;dot:${ORANGE}`);
-    rerender({ b, dot: null });
     expect(icon32()).toBe("/brand/logo.svg");
+    rerender({ b, dot: "unread" });
+    expect(icon32()).toBe("/brand/logo.svg");
+    // Nothing was drawn for the status: no initial-letter chip, no dot.
+    expect(encodes).toBe(before);
+    expect(drawn.some((d) => d === "text:H")).toBe(false);
   });
 
   it("composites the dot onto a CORS-readable image logo", async () => {

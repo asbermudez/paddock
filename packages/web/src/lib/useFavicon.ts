@@ -14,8 +14,10 @@
  *       them throwing or leaving a broken icon:
  *         a. CORS load fails, or the canvas is tainted → load it WITHOUT CORS;
  *            if that succeeds the image is fine to show, just not to composite,
- *            so the raw URL becomes the icon (`raw`) — and while a status dot is
- *            needed, which requires compositing, the name's initial stands in.
+ *            so the raw URL becomes the icon (`raw`). It STAYS the icon while a
+ *            status is shown, with no dot: the dot needs compositing, and the
+ *            tab's identity must not flip to another picture with every turn.
+ *            The title prefix still carries the status.
  *         b. The image does not load at all → a chip with the name's initial.
  *  2. APPLY base + dot. Rendered hrefs are memoised per (base, dot), so a status
  *     that flips back and forth, or a count that changes without changing the
@@ -59,8 +61,8 @@ export function nameInitial(name: string): string {
 export type FaviconBase =
   | { kind: "shipped" }
   | { kind: "chip"; content: ChipContent; color: string }
-  /** A logo that shows but can't be composited; `initial` is for when a dot is needed. */
-  | { kind: "raw"; src: string; initial: ChipContent; color: string };
+  /** A logo that shows but can't be composited — so it never carries a dot. */
+  | { kind: "raw"; src: string };
 
 /** Resolve the brand. Calls back once (asynchronously for an image logo) unless cancelled. */
 function resolveBase(brand: Pick<Brand, "name" | "logo" | "accent">, done: (b: FaviconBase) => void): () => void {
@@ -81,7 +83,7 @@ function resolveBase(brand: Pick<Brand, "name" | "logo" | "accent">, done: (b: F
   };
   const fallbackToRawUrl = () =>
     loadImage(src, false).then(
-      () => settle({ kind: "raw", src, initial, color }),
+      () => settle({ kind: "raw", src }),
       () => settle({ kind: "chip", content: initial, color }),
     );
   loadImage(src, true).then((image) => {
@@ -114,8 +116,8 @@ function hrefsFor(
     case "chip":
       return renderFaviconHrefs(base.content, base.color, dotColor);
     case "raw":
-      if (!dotColor) return { small: base.src, large: base.src };
-      return renderFaviconHrefs(base.initial, base.color, dotColor) ?? { small: base.src, large: base.src };
+      // No dot, by design (see the top of the file): identity beats status here.
+      return { small: base.src, large: base.src };
   }
 }
 

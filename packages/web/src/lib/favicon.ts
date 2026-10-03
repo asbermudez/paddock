@@ -127,9 +127,13 @@ function drawContent(ctx: CanvasRenderingContext2D, opts: FaviconChipOptions): v
   else ctx.drawImage(content.icon, 0, 0, size, size);
 }
 
-/** Dot radius and the ring cut around it, as fractions of the edge. ~4px + 1.5px at 16. */
-const DOT_R = 0.25;
-const DOT_RING = 0.1;
+/**
+ * Dot radius and the ring cut around it, as fractions of the edge: ~3.5px with
+ * a ~1px ring at 16px. Small enough to leave the logo readable, big enough to
+ * read at a glance on light and dark tab strips (checked on both).
+ */
+const DOT_R = 0.22;
+const DOT_RING = 0.07;
 
 /**
  * The status dot, bottom-right. The ring is a HOLE (`destination-out`), not a

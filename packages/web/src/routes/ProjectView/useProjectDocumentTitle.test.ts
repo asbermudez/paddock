@@ -140,7 +140,7 @@ describe("projectTabScope (#958 part 3)", () => {
 
   it("composes with the root-omission rule: a root chat reads `✓ Fix the tap — House`", () => {
     const sc = scope({ view: "chat", root: true, slug: "", activeSession: "s1", unread: new Set(["s1"]) });
-    const status = computeTabStatus(sc, { badges: new Map(), active: new Map() });
+    const status = computeTabStatus(sc, { active: new Map(), finished: [], hiddenSince: null });
     const parts = projectTitleParts({
       ...base,
       view: "chat",
@@ -154,8 +154,13 @@ describe("projectTabScope (#958 part 3)", () => {
 
   it("composes with the title: `● (2) hushpod — House`", () => {
     const status = computeTabStatus(scope({}), {
-      badges: new Map([["hushpod", { unread: 2, inflight: 1 }]]),
       active: new Map([["s9", "hushpod"]]),
+      // Two replies landed after the tab was hidden at t=1000.
+      finished: [
+        { projectSlug: "hushpod", at: 2000 },
+        { projectSlug: "hushpod", at: 3000 },
+      ],
+      hiddenSince: 1000,
     });
     expect(formatDocumentTitle({ parts: projectTitleParts(base), brand: "House", prefix: tabStatusPrefix(status) })).toBe(
       "● (2) hushpod — House",

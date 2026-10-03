@@ -248,3 +248,40 @@ describe("useUnreadChats — marks seen only while the tab is visible (#958)", (
     expect(result.current.unread.has(sid)).toBe(false);
   });
 });
+
+/**
+ * The deferred mark is applied before the browser can paint (#958). A browser
+ * paints only at a TASK boundary, never between microtasks, so "before paint"
+ * here means: by the time the microtask queue drains after `visibilitychange`,
+ * the open chat is no longer unread. Run outside `act()` on purpose — `act`
+ * flushes everything, which is exactly what would hide the difference. With a
+ * plain `useEffect` the clear only lands on a later task, and this fails.
+ */
+describe("useUnreadChats — the deferred mark lands before paint (#958)", () => {
+  it("clears the open chat's unread state within the same task as the visibilitychange", async () => {
+    let visibility: DocumentVisibilityState = "hidden";
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+    const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    try {
+      const sid = "sess-prepaint";
+      const h = harness(sid);
+      const { result, rerender } = renderHook((p: Props) => useUnreadChats(p), {
+        initialProps: h.props({ running: [sid] }),
+      });
+      await act(async () => {
+        rerender(h.props({ running: [] }));
+      });
+      expect(result.current.unread.has(sid)).toBe(true);
+
+      g.IS_REACT_ACT_ENVIRONMENT = false;
+      visibility = "visible";
+      document.dispatchEvent(new Event("visibilitychange"));
+      // Drain microtasks only — no task boundary, so no paint could have happened.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(result.current.unread.has(sid)).toBe(false);
+    } finally {
+      g.IS_REACT_ACT_ENVIRONMENT = true;
+      delete (document as unknown as Record<string, unknown>).visibilityState;
+    }
+  });
+});

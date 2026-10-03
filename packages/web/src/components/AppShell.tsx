@@ -232,8 +232,9 @@ export function AppShell() {
   );
   const { badges, unreadChats, active } = useProjectBadges(badgeWorkspaces);
   // Live tab status (#958 part 3): the routed page publishes what it is about,
-  // and this resolves it against the same badges + running set the sidebar uses.
-  const tabStatus = useTabStatusState({ badges, active });
+  // and this resolves it against the same running set + unread list the sidebar
+  // uses — but counting only replies that landed while this tab was hidden.
+  const tabStatus = useTabStatusState({ active, finished: unreadChats });
   // The tab icon is the brand chip, so instances can be told apart (#958), with
   // the status dot on top.
   useFavicon(brand, tabStatusDot(tabStatus.status));
