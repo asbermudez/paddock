@@ -11,21 +11,15 @@
  * identifier.) The initial, on the other hand, comes from the display name —
  * it is what the user reads next to it.
  *
+ * The sidebar passes `color` from `assignChipColors` (lib/projectChips.ts), which
+ * keeps neighbouring projects off the same palette slot; without it the chip
+ * falls back to the bare hash, `deriveChipColor(slug)`.
+ *
  * Purely decorative: `aria-hidden`, so the row's accessible name is still just
  * the project name.
  */
 import { chipForeground, deriveChipColor } from "../lib/brandChip";
-
-let segmenter: Intl.Segmenter | null | undefined;
-function graphemes(s: string): string[] {
-  if (segmenter === undefined) {
-    segmenter = typeof Intl !== "undefined" && "Segmenter" in Intl
-      ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
-      : null;
-  }
-  if (segmenter) return Array.from(segmenter.segment(s), (g) => g.segment);
-  return Array.from(s); // code points: keeps a surrogate pair whole, at least
-}
+import { graphemes } from "../lib/graphemes";
 
 /**
  * The chip's glyph: the first letter, digit or emoji of `name`, uppercased.
@@ -49,8 +43,19 @@ export function projectInitial(name: string): string {
   return graphemes(upper).length === 1 ? upper : meaningful;
 }
 
-export function ProjectChip({ slug, name, className = "" }: { slug: string; name: string; className?: string }) {
-  const bg = deriveChipColor(slug);
+export function ProjectChip({
+  slug,
+  name,
+  color,
+  className = "",
+}: {
+  slug: string;
+  name: string;
+  /** The assigned chip colour; defaults to the slug's hashed palette colour. */
+  color?: string;
+  className?: string;
+}) {
+  const bg = color ?? deriveChipColor(slug);
   return (
     <span
       aria-hidden="true"

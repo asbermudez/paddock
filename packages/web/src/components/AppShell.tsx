@@ -18,6 +18,7 @@ import { TagPill } from "./TagPill";
 import { FleetReadout, type FinishedChat } from "./FleetReadout";
 import { CogIcon, HomeIcon, LinkIcon, MenuIcon, MoonIcon, PlusIcon, SearchIcon, SunIcon, XIcon } from "./icons";
 import { ProjectChip } from "./ProjectChip";
+import { assignChipColors } from "../lib/projectChips";
 import { NewProjectModal } from "./NewProjectModal";
 import { PaneResizer, usePaneWidth } from "./PaneResizer";
 import { SIDENAV_PANE } from "../lib/paneWidth";
@@ -221,6 +222,11 @@ export function AppShell() {
     return orderAreaSlugs(map.keys()).map((slug) => [slug, map.get(slug) ?? []] as const);
   }, [projects]);
 
+  // Project chip colours (#958), assigned over the WHOLE list at once so no two
+  // projects share a palette slot until all twelve are used — oldest first, so
+  // adding a project never recolours an existing one (see lib/projectChips.ts).
+  const chipColors = useMemo(() => assignChipColors(projects), [projects]);
+
   // Badges are computed over EVERY badge-bearing sidebar row — the project list
   // plus Home — so the root is appended to the same array the hook already
   // folded (#553). It stays out of `projects`/`sections`, which drive the list
@@ -412,7 +418,12 @@ export function AppShell() {
                   </div>
                 )}
                 {ps.map((p) => (
-                  <ProjectNavLink key={p.slug} project={p} badge={badges.get(p.slug)} />
+                  <ProjectNavLink
+                    key={p.slug}
+                    project={p}
+                    badge={badges.get(p.slug)}
+                    chipColor={chipColors.get(p.slug)}
+                  />
                 ))}
               </div>
             ))}
@@ -562,7 +573,15 @@ function RouteFallback() {
  * editable in Settings); its space now shows two subtle, glanceable counts:
  * unread replies (primary) and in-flight turns (secondary), each only when > 0.
  */
-function ProjectNavLink({ project: p, badge }: { project: Project; badge?: ProjectBadge }) {
+function ProjectNavLink({
+  project: p,
+  badge,
+  chipColor,
+}: {
+  project: Project;
+  badge?: ProjectBadge;
+  chipColor?: string;
+}) {
   return (
     <NavLink
       to={`/projects/${p.slug}`}
@@ -577,7 +596,7 @@ function ProjectNavLink({ project: p, badge }: { project: Project; badge?: Proje
           {/* The project's chip (#958): its initial on a colour hashed from the
               slug, the same derivation the favicon uses. 16px sits inside the
               20px `text-sm` line box, so the row is no taller than it was. */}
-          <ProjectChip slug={p.slug} name={p.name} />
+          <ProjectChip slug={p.slug} name={p.name} color={chipColor} />
           <span className="truncate font-medium">{p.name}</span>
         </span>
         <ProjectBadges badge={badge} />
