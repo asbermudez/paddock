@@ -70,9 +70,10 @@ you visit, more a service your other tools talk to.
 - ⏰ **Triggers & automation** — run a turn on a schedule, on a lifecycle event, or on demand; each trigger can carry its own scoped toolset
 - 🤖 **Self-driving** — an opt-in, depth-gated in-process MCP lets Claude list projects, read chats, spawn and fork chats to fan work out across parallel sessions, manage a project's triggers, and — behind a further flag — provision new projects
 - ⏳ **Background work outlives the turn** — a build, deploy, or sub-agent Claude backgrounds keeps running after the turn ends and wakes it with the result
-- 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively
+- 📎 **Send files & images** — pick, drag-drop, or paste into the composer; Claude reads images and PDFs natively, and the files it sends back render inline, open full screen, and copy or download in a click
 - 📁 **Files & Changes** — browse rendered project files and review Claude's work as git diffs
-- 🧩 **Two project types** — notebook (data-repo subdir) or repo-backed (clone an external repo as cwd)
+- 🧩 **Three ways to back a project** — a notebook (data-repo subdir), a repo-backed clone of an external repo, or a link to a directory already on disk
+- 🚦 **The whole fleet at a glance** — a live strip of running and just-finished chats on every screen, one Running & Recent list on Home, and browser tabs that name their chat and show its status
 - 📱 **Works from your phone** — the same launchpad, fully responsive
 - 🔀 **Chat ergonomics** — star to pin, mark unread, fork or rewind from any message, queue-while-streaming, stop, search, archive; spawned chats nest under the chat that created them
 - 🎛️ **Settings, per project and per instance** — model, permission mode, curation budgets and more per project; an instance-wide **Config** screen edits `paddock.config.yaml` from the UI
@@ -92,12 +93,12 @@ npx @edspencer/paddock -o
 That starts the server on **http://127.0.0.1:7233** and opens a browser at it. Data
 lives in `~/.paddock`; the directory you run it from makes no difference.
 
-**A new instance opens on Discover.** It reads your Claude Code history, works out
+**A new instance's Home opens with Discover.** It reads your Claude Code history, works out
 which directories on this machine you have actually been using `claude` in, and
 offers them as projects — with conversation counts, last-used dates and git remotes,
 so you can tell them apart. Tick the ones you want, press Import, and instead of an
-empty instance you are looking at your own work, resumable. It stays in the sidebar
-afterwards.
+empty instance you are looking at your own work, resumable. It stays a click away
+in the sidebar afterwards.
 
 **Nothing is written into your directories.** No `.paddock/`, no `.chats/`, no
 `.gitignore` edit, no `CLAUDE.md` — the project record and the copied transcripts
